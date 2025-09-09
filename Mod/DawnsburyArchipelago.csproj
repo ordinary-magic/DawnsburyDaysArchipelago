@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <Import Project="Dawnsbury.Mod.targets" />
+    <PropertyGroup>
+      <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    </PropertyGroup>
+    <ItemGroup>
+      <PackageReference Include="Archipelago.MultiClient.Net" Version="6.6.0" />
+      <PackageReference Include="Lib.Harmony.Thin" Version="2.3.6" />
+    </ItemGroup>
+</Project>
