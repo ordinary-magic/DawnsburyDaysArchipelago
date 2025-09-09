@@ -13,7 +13,7 @@ If you are not connected, this button will be red, the new campaign will say "**
 Currently, this mod only affects the base game's Dawnsbury Days campaign.
 
 ## Installation
-* First, download and extract the most recent release from the releases page.
+* First, download and extract the most recent release from the [releases page](https://github.com/ordinary-magic/DawnsburyDaysArchipelago/releases).
 * To install the archipalgo world, double click the .apworld to install it into your archipelago launcher.
 * To install the game mod, copy the rest of the files into the CustomMods folder in your Dawnsbury Days game installation.
 
