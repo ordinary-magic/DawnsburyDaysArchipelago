@@ -39,19 +39,50 @@ public class ArchipelagoPathRandomizer(AdventurePath path, ArchipelagoClient arc
     }
 
     /**
-     * Override the default campaign stop generator and remove level up stops
+     * Override the default campaign stop generator to remove level up stops from the final campaign
      */
-    protected override IEnumerable<CampaignStop> FilterCampaignStops(IEnumerable<CampaignStop> inputStops)
+    protected override bool KeepCampaignStop(CampaignStop stop)
     {
-        return inputStops.Where(stop => stop is not LevelUpStop);
+        return stop is not LevelUpStop;
     }
 
     /**
      * Override parent method to give us the option to turn off randomization if requested.
      */
-    protected override IEnumerable<CampaignStop> GetRandomizationPool(IEnumerable<CampaignStop> inputStops)
+    protected override IEnumerable<EncounterCampaignStop> GetEncountersToBeRandomized(IEnumerable<CampaignStop> inputStops)
     {
-        return archipelago.UseRandomEncounterOrder ? base.GetRandomizationPool(inputStops) : [];
+        return archipelago.UseRandomEncounterOrder ? base.GetEncountersToBeRandomized(inputStops) : [];
+    }
+
+    /**
+     * Override the parent method to allow us to include the free encounters if requested
+     */
+    protected override IEnumerable<EncounterCampaignStop> GetEncounterReplacementPool(IEnumerable<CampaignStop> inputStops)
+    {
+        var campaign_encoutners = GetEncountersToBeRandomized(inputStops);
+        
+        if (archipelago.IncludeFreeEncounters)
+        {
+            // TODO: Figure out how to find these
+            IEnumerable<EncounterCampaignStop> freeEncounters = [];
+            return campaign_encoutners.Concat(freeEncounters);
+        }
+        else
+            return campaign_encoutners;
+    }
+
+    /**
+     * Override the parent method to allow us to select the max level.
+     */
+    protected override int GetMaxLevelForReplacementStop(int originalLevel)
+    {
+        return archipelago.EncounterDifficulty switch
+        {
+            ArchipelagoClient.ApEncounterDifficulty.Simple => originalLevel,
+            ArchipelagoClient.ApEncounterDifficulty.Balanced => originalLevel + 1,
+            ArchipelagoClient.ApEncounterDifficulty.Difficult => 99,// no level restriction
+            _ => originalLevel + 1,
+        };
     }
 
     /**
@@ -59,6 +90,7 @@ public class ArchipelagoPathRandomizer(AdventurePath path, ArchipelagoClient arc
      */
     protected override IEnumerable<Item> FilterLoot(IEnumerable<Item> loot)
     {
+        // Eventually, will look for cold iron/anarchic weapons here, but there arent yet any of those
         return loot.Where(item => !item.Traits.Contains(Trait.Weapon));
     }
 

@@ -79,14 +79,17 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
         // Items are stored as pc1-level, pc2-level, pc3-level, pc4-level, pc1-weapon etc.
         //  Thus, we can divide by four, and use the remainder as a pc index and the quotent as an item index. 
         var affectedPc = Heroes[CampaignHeroes[itemId % 4]];
-        switch ((ArchipelagoClient.ApItemTypes)(itemId / 4))
+        lock (affectedPc)
         {
-            case ArchipelagoClient.ApItemTypes.LevelUp:
-                affectedPc.Level++;
-                break;
-            case ArchipelagoClient.ApItemTypes.WeaponImprovement:
-                affectedPc.IncrementProgressiveWeaponBonuses();
-                break;
+            switch ((ArchipelagoClient.ApItemTypes)(itemId / 4))
+            {
+                case ArchipelagoClient.ApItemTypes.LevelUp:
+                    affectedPc.Level++;
+                    break;
+                case ArchipelagoClient.ApItemTypes.WeaponImprovement:
+                    affectedPc.IncrementProgressiveWeaponBonuses();
+                    break;
+            }
         }
     }
 

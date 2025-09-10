@@ -32,12 +32,22 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     // Debug Property to enable simulated effects without an archipelago connection
     public static readonly bool MockArchipelago = false;
 
+    private const int PROTOCOL_VERSION = 10100; // 1.1.0 (2 digits per)
+
     // Enum defining the item types we get from the server
     public enum ApItemTypes
     {
         LevelUp,
         WeaponImprovement,
         ArmorImprovement
+    }
+
+    // Enum defining the encounter difficulty options
+    public enum ApEncounterDifficulty
+    {
+        Simple,
+        Balanced,
+        Difficult
     }
 
     // Properties //
@@ -47,6 +57,8 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     // Configuration Information //
     public string RngSeed { get; set; } = "";
     public bool UseRandomEncounterOrder { get; private set; } = false;
+    public ApEncounterDifficulty EncounterDifficulty = ApEncounterDifficulty.Balanced;
+    public bool IncludeFreeEncounters = false;
     public bool ShuffleEncounterLoot { get; private set; } = false;
     private long apBaseIDOffset = 0; // Archipelago ids must have a unique range, so we start at the offset
 
@@ -116,6 +128,13 @@ public class ArchipelagoClient(ApConnectionInfo connection)
      */
     private void InitializeRandomizer(Dictionary<string, object> slotData)
     {
+        // Check if the version matches (handle old versions of the code)
+        int serverVersion = Convert.ToInt32(slotData.GetValueOrDefault("version") ?? 0);
+        if (serverVersion < PROTOCOL_VERSION)
+            MessageQueue.Enqueue($"Archipelago Version Mismatch: Your Archipelago Server is out of date; some features might not work correctly.");
+        else if (serverVersion > PROTOCOL_VERSION)
+            MessageQueue.Enqueue($"Archipelago Version Mismatch: Your Game Mod is out of date; some features might not work correctly.");
+
         // Archipelago requires unique keys across all games, so we solve this by defining a base offset for items/locations
         apBaseIDOffset = Convert.ToInt64(slotData["base_offset"]);
 
@@ -125,6 +144,10 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         // get the randomization settings
         UseRandomEncounterOrder = Convert.ToBoolean(slotData["encounter_shuffle"]);
         ShuffleEncounterLoot = Convert.ToBoolean(slotData["loot_shuffle"]);
+
+        // Settings which weren't in the first version need default values in case of version mismatch
+        EncounterDifficulty = (ApEncounterDifficulty) Convert.ToInt32(slotData.GetValueOrDefault("shuffle_difficulty") ?? EncounterDifficulty);
+        IncludeFreeEncounters = Convert.ToBoolean(slotData.GetValueOrDefault("include_free_encounters") ?? IncludeFreeEncounters);
 
         // Initialize the character's status
         CharacterStatus.InitializeCampaignHeroes(slotData);

@@ -8,6 +8,7 @@ using System.Data;
 using Dawnsbury.Core.Mechanics.Treasure;
 using System.Security.Cryptography;
 using System.Text;
+using System.IO;
 
 namespace DawnsburyArchipelago;
 
@@ -32,7 +33,6 @@ public class AdventurePathRandomizer(AdventurePath input)
     protected virtual int StartingShopLevel => startingShopLevel;
 
     /// State Tracking Fields ///
-    private int currentLevel = 0;
     private int encounterCounter = 0;
     protected List<Item> lootPile = [];
     protected List<int> goldPile = [];
@@ -76,37 +76,38 @@ public class AdventurePathRandomizer(AdventurePath input)
         }
 
         List<CampaignStop> newPath = [];
-        currentLevel = StartLevel;
+        var currentLevel = startLevel;
 
         // Add explainer to opening narration stop: (note, i want this to explode if i am ever wrong about the order)
         newPath.Add(AddTextToStartOfNarrationStop((NarratorStop) input.CampaignStops[0], "Randomizer!", GetExplainerText()));
 
         // Add the initial dawnsbury shop (many things break without this)
         int stopCount = 1;
-        newPath.Add(CopyStop(input.CampaignStops[1], stopCount++, true));
+        newPath.Add(CopyStop(input.CampaignStops[1], stopCount++, currentLevel, true));
 
         // Get a list of campaign stops to shuffle and then shuffle them
-        var stopsToShuffle = GetRandomizationPool(input.CampaignStops.Skip(stopCount)).ToList();
-        var shuffledStops = stopsToShuffle.OrderBy(_ => rng.Next()).GetEnumerator();
+        var remainingStops = input.CampaignStops.Skip(stopCount);
+        var stopsToShuffle = GetEncountersToBeRandomized(remainingStops).ToList();
+        var shuffledStops = GetEncounterReplacementPool(remainingStops).OrderBy(_ => rng.Next()).ToList();
 
         // Iterate through the filtered list of campaign stops
-        foreach (var encounter in FilterCampaignStops(input.CampaignStops.Skip(stopCount)))
+        foreach (var encounter in input.CampaignStops.Skip(stopCount))
         {
             var stopToAdd = encounter;
 
             // Check for shuffled encounters and get their random replacement
             if (stopsToShuffle.Contains(encounter))
-            {
-                shuffledStops.MoveNext(); // advance the enumerator (is initially at index -1)
-                stopToAdd = shuffledStops.Current;
-            }
+                stopToAdd = PopRandomValidStop(shuffledStops, currentLevel, rng);
 
             // Check if we need to apply a level up
             if (stopToAdd is LevelUpStop)
                 currentLevel++;
-
-            newPath.Add(CopyStop(stopToAdd, stopCount++));
+            if (KeepCampaignStop(stopToAdd))
+                newPath.Add(CopyStop(stopToAdd, stopCount++, currentLevel));
         }
+
+        // Data Mine the loot (DEBUG)
+        //DataMineLoot(lootPile);
 
         // Randomize the loot
         goldPile = [.. goldPile.OrderBy(_ => rng.Next())];
@@ -116,20 +117,43 @@ public class AdventurePathRandomizer(AdventurePath input)
     }
 
     /**
-     * Virutal method to filter a list of campaign stops to only the ones which we wish to keep
+     * Virutal method to determine if we should keep a campaign stop or filter it from the final campaign
      */
-    protected virtual IEnumerable<CampaignStop> FilterCampaignStops(IEnumerable<CampaignStop> inputStops)
+    protected virtual bool KeepCampaignStop(CampaignStop inputStop) => true;
+
+    /**
+     * Virutal method to filter a list of campaign stops to only the ones which we wish to replace.
+     */
+    protected virtual IEnumerable<EncounterCampaignStop> GetEncountersToBeRandomized(IEnumerable<CampaignStop> inputStops)
     {
-        return inputStops; // Basic shuffler keeps every encounter type.
+        return inputStops.Where(stop => stop is EncounterCampaignStop).Cast<EncounterCampaignStop>();
     }
 
     /**
-     * Virutal method to filter a list of campaign stops to only the ones which we wish to shuffle.
+     * Virutal method to return a list of campaign stops which are allowed to be randomly shuffled to replace other ones.
      */
-    protected virtual IEnumerable<CampaignStop> GetRandomizationPool(IEnumerable<CampaignStop> inputStops)
+    protected virtual IEnumerable<EncounterCampaignStop> GetEncounterReplacementPool(IEnumerable<CampaignStop> inputStops)
     {
-        return inputStops.Where(stop => stop is EncounterCampaignStop);
+        return GetEncountersToBeRandomized(inputStops);
     }
+
+    /**
+     * Method to pick a random valid stop in the list of unused stops, remove it from thh list, and return it.
+     */
+    private EncounterCampaignStop PopRandomValidStop(List<EncounterCampaignStop> stops, int level, Random rng)
+    {
+        // TODO: throwing array exception because everything is level 4 for some reason?
+        // Works fine for non-archipelago mode tho
+        var valid = stops.Where(stop => stop.EncounterSample.Map.Level <= GetMaxLevelForReplacementStop(level)).ToArray();
+        var chosen = valid[rng.Next(valid.Length)];
+        stops.Remove(chosen); // "pop" the stop off the list so we know its been used
+        return chosen;
+    }
+
+    /**
+     * Virutal method to define what the maximum level of a campaign stop which replaces an existing one can be.
+     */
+    protected virtual int GetMaxLevelForReplacementStop(int originalLevel) => originalLevel + 1;
 
     /**
      * Overwritable loot filtering method
@@ -139,7 +163,7 @@ public class AdventurePathRandomizer(AdventurePath input)
     /**
      * Create a copy of a "CampaignStop" object, with new index and spoiler values
      */
-    protected CampaignStop CopyStop(CampaignStop input, int index, bool initialDawsnbury = false)
+    protected CampaignStop CopyStop(CampaignStop input, int index, int level, bool initialDawsnbury = false)
     {
         CampaignStop newStop = input;
 
@@ -149,7 +173,7 @@ public class AdventurePathRandomizer(AdventurePath input)
             var encounter = eStop.EncounterProvider();
             lootPile.AddRange(FilterLoot(encounter.Rewards));
             goldPile.Add(encounter.RewardGold);
-            var encounterProvider = RandomEncounterProviderWrapper(encounter, currentLevel, encounterCounter++);
+            var encounterProvider = RandomEncounterProviderWrapper(encounter, level, encounterCounter++);
             newStop = new EncounterCampaignStop(encounterProvider);
         }
         else if (input is LevelUpStop)
@@ -161,7 +185,7 @@ public class AdventurePathRandomizer(AdventurePath input)
         else if (input is NarratorStop nStop)
             newStop = new NarratorStop(nStop.Name, nStop.Description, nStop.VoiceLine);
         else if (input is DawnsburyStop dStop)
-            newStop = new DawnsburyStop(null, initialDawsnbury, currentLevel, dStop.DawnsburyUnderTheSea, dStop.Name);
+            newStop = new DawnsburyStop(null, initialDawsnbury, level, dStop.DawnsburyUnderTheSea, dStop.Name);
 
         // Values we are keeping
         newStop.OpensChapter = input.OpensChapter;
@@ -203,6 +227,17 @@ public class AdventurePathRandomizer(AdventurePath input)
         int nextIndex = lootPile.Count * (index + 1) / encounterCounter;
         var loot = lootPile.GetRange(startIndex, nextIndex - startIndex);
         return (goldPile[index], loot);
+    }
+
+    /**
+     * Debug method to data mine the encounter loot for an adventure 
+     */
+    private static void DataMineLoot(IEnumerable<Item> loot)
+    {
+        using var lootfile = new StreamWriter("lootdump.txt");
+        foreach (var item in loot)
+            lootfile.WriteLine(item.ToString());
+
     }
 
     /**

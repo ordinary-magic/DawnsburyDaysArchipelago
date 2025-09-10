@@ -67,8 +67,17 @@ Dawnsbury Days:
     'false': 0
     'true': 50
 
+  shuffle_difficulty:
+    # How shuffled should we make the encounters:
+    # Difficult: No restrictions (you can fight the final boss in encounter 1)
+    # Balanced: Encounters can show up at most one level before they would normally be encountered (Default).
+    # Simple: Encounters are only shuffled with encounters of the same level
+    simple: 0
+    balanced: 50
+    difficult: 0
+
   loot_shuffle:
-    # Should the encounter rewards be shuffled?
+    # Should the encounter rewards (potions, scrolls, etc) be shuffled?
     'false': 0
     'true': 50
 

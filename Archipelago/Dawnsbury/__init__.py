@@ -37,4 +37,5 @@ class DawnsburyWorld(World):
         slot_data = make_option_slot_data(self.options)
         slot_data.update(make_campaign_metadata(self.options))
         slot_data['base_offset'] = BASE_OFFSET
+        slot_data['version'] = 10100 # 1.1.0 (2 digits per)
         return slot_data
