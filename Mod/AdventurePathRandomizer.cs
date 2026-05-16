@@ -9,26 +9,31 @@ using Dawnsbury.Core.Mechanics.Treasure;
 using System.Security.Cryptography;
 using System.Text;
 using System.IO;
+using Dawnsbury.Core.StatBlocks.Monsters.L6;
+using Dawnsbury.Campaign.Encounters.Evil_from_the_Stars;
 
 namespace DawnsburyArchipelago;
 
 /*
  * Class which will setup an randomized adventure path variant of an existing dawnsbury days campaign
  */
-public class AdventurePathRandomizer(AdventurePath input)
+public class AdventurePathRandomizer(AdventurePath[] input)
 {
     /// Metadata fields ///
-    protected readonly string inputId = input.Id;
-    protected readonly string inputName = input.Name;
-    protected readonly int startLevel = input.StartingLevel;
-    protected readonly int endLevel = input.StartingLevel + input.CampaignStops.Where(stop => stop is LevelUpStop).Count();
-    protected readonly int startingShopLevel = input.StartingShopLevel;
-    protected readonly string? credits = input.CreditsVictoryString;
+    protected readonly string inputId = input[0].Id;
+    protected readonly string inputName = input[0].Name;
+    protected readonly string? credits = input[0].CreditsVictoryString;
+    protected readonly int startLevel = input.Min(path => path.StartingLevel);
+    protected readonly int startingShopLevel = input.Min(path => path.StartingShopLevel);
+    protected readonly int endLevel =
+        input.Min(path => path.StartingLevel) +
+        input.SelectMany(path => path.CampaignStops).Count(stop => stop is LevelUpStop);
+
 
     /// Overwritable metadata properties ///
     protected virtual string Id => "Random_" + inputId;
     protected virtual string Name => " Randomized " + inputName;
-    protected virtual string Description => $"{input.Name}, but the encounter order, enemies, and loot are all randomly determined.";
+    protected virtual string Description => $"{inputName}, but the encounter order, enemies, and loot are all randomly determined.";
     protected virtual int StartLevel => ArchipelagoClient.MockArchipelago? endLevel : startLevel;
     protected virtual int StartingShopLevel => startingShopLevel;
 
@@ -36,7 +41,6 @@ public class AdventurePathRandomizer(AdventurePath input)
     private int encounterCounter = 0;
     protected List<Item> lootPile = [];
     protected List<int> goldPile = [];
-
     /**
      * Create a new adventure path that shuffles the order of the input adventure path encounters. 
      */
@@ -45,7 +49,7 @@ public class AdventurePathRandomizer(AdventurePath input)
         if (ArchipelagoClient.MockArchipelago)
             CharacterStatus.InitializeCampaignHeroesAsMock();
 
-        return new AdventurePathRandomizer(input).ShufflePath();
+        return new AdventurePathRandomizer([input]).ShufflePath();
     }
 
     /**
@@ -56,7 +60,7 @@ public class AdventurePathRandomizer(AdventurePath input)
         // Make it into an adventure path
         var path = new AdventurePath(Id, Name, Description, StartLevel, StartingShopLevel, ShuffleCampaignStops(seed))
         {
-            BackgroundMusic = input.BackgroundMusic,
+            BackgroundMusic = input[0].BackgroundMusic,
             CreditsVictoryString = (credits ?? "") + "\nRandomization by Ordinary Magician ✨",
         };
         return path;
@@ -77,21 +81,27 @@ public class AdventurePathRandomizer(AdventurePath input)
 
         List<CampaignStop> newPath = [];
         var currentLevel = startLevel;
+        int stopCount = 0;
 
-        // Add explainer to opening narration stop: (note, i want this to explode if i am ever wrong about the order)
-        newPath.Add(AddTextToStartOfNarrationStop((NarratorStop) input.CampaignStops[0], "Randomizer!", GetExplainerText()));
+        if (input[0].CampaignStops[0] is NarratorStop stop)
+        {
+            // If the first stop is a narration stop (as it is in the first campaign), modify the narration
+            newPath.Add(AddTextToStartOfNarrationStop(stop, "Randomizer!", GetExplainerText()));
+            stopCount++;
+        }
 
         // Add the initial dawnsbury shop (many things break without this)
-        int stopCount = 1;
-        newPath.Add(CopyStop(input.CampaignStops[1], stopCount++, currentLevel, true));
+        var initalShop = input[0].CampaignStops[stopCount];
+        newPath.Add(CopyStop(initalShop, stopCount, currentLevel, initalShop.OpensChapter, true));
+        stopCount++;
 
         // Get a list of campaign stops to shuffle and then shuffle them
-        var remainingStops = input.CampaignStops.Skip(stopCount);
+        var remainingStops = input.SelectMany(path => path.CampaignStops).Skip(stopCount);
         var stopsToShuffle = GetEncountersToBeRandomized(remainingStops).ToList();
         var shuffledStops = GetEncounterReplacementPool(remainingStops).OrderBy(_ => rng.Next()).ToList();
 
         // Iterate through the filtered list of campaign stops
-        foreach (var encounter in input.CampaignStops.Skip(stopCount))
+        foreach (var encounter in input.SelectMany(path => path.CampaignStops).Skip(stopCount))
         {
             var stopToAdd = encounter;
 
@@ -103,7 +113,7 @@ public class AdventurePathRandomizer(AdventurePath input)
             if (stopToAdd is LevelUpStop)
                 currentLevel++;
             if (KeepCampaignStop(stopToAdd))
-                newPath.Add(CopyStop(stopToAdd, stopCount++, currentLevel));
+                newPath.Add(CopyStop(stopToAdd, stopCount++, currentLevel, encounter.OpensChapter));
         }
 
         // Data Mine the loot (DEBUG)
@@ -163,7 +173,7 @@ public class AdventurePathRandomizer(AdventurePath input)
     /**
      * Create a copy of a "CampaignStop" object, with new index and spoiler values
      */
-    protected CampaignStop CopyStop(CampaignStop input, int index, int level, bool initialDawsnbury = false)
+    protected CampaignStop CopyStop(CampaignStop input, int index, int level, string? opensChapter, bool initialDawsnbury = false)
     {
         CampaignStop newStop = input;
 
@@ -187,8 +197,8 @@ public class AdventurePathRandomizer(AdventurePath input)
         else if (input is DawnsburyStop dStop)
             newStop = new DawnsburyStop(null, initialDawsnbury, level, dStop.DawnsburyUnderTheSea, dStop.Name);
 
-        // Values we are keeping
-        newStop.OpensChapter = input.OpensChapter;
+        // Keep the "opens chapter" stop for the stop we repalce
+        newStop.OpensChapter = opensChapter;
 
         // Values we are changing
         newStop.Index = index;
@@ -237,7 +247,6 @@ public class AdventurePathRandomizer(AdventurePath input)
         using var lootfile = new StreamWriter("lootdump.txt");
         foreach (var item in loot)
             lootfile.WriteLine(item.ToString());
-
     }
 
     /**

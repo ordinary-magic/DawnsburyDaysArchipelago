@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Dawnsbury.Auxiliary;
 using Dawnsbury.Core.CombatActions;
 using Dawnsbury.Core.Creatures;
 using Dawnsbury.Core.Creatures.Parts;
@@ -16,13 +17,15 @@ namespace DawnsburyArchipelago;
 
 /**
  * Class to define a character's current progressive bonuses.
- * Note: Currently only supports DD campaign bonuses (effects from items level 1 to 4)
  */
-public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
+public class CharacterStatus(int level, int weaponPotency, int strikingRunes, int armorPotency, int resilientRunes, int skillBonus)
 {
     public int Level { get; set; } = level;
     public int WeaponPotency { get; set; } = weaponPotency;
     public int Striking { get; set; } = strikingRunes;
+    public int ArmorPotency { get; set; } = armorPotency;
+    public int  Resilient { get; set; } =  resilientRunes;
+    public int  SkillBonus { get; set; } =  skillBonus;
 
     // Static tracker for the status of the campaign heroes, using creature id's as keys
     public static ConcurrentDictionary<CreatureId, CharacterStatus> Heroes { get; } = [];
@@ -40,6 +43,19 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
             WeaponPotency++;
         else
             Striking++;
+    }
+
+    
+    /**
+    * Progressivley improve the status of the armor
+    */
+    public void IncrementProgressiveArmorBonuses()
+    {
+        // Armor improvements always alternate between +1 and resilient in game, so match that here
+        if (ArmorPotency == Resilient)
+            ArmorPotency++;
+        else
+            Resilient++;
     }
 
     /**
@@ -70,6 +86,50 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
                 return (item.WeaponProperties?.DamageDieCount - 1) < Striking;
             };
     }
+    
+    /**
+    * Get this creature's armor bonuses (for qEffect.BonusToDefenses)
+    */
+    public Func<QEffect, CombatAction?, Defense, Bonus?> GetDefenseBonus()
+    {
+        return (qfSelf, combatAction, defense) =>
+            {
+                if (defense == Defense.AC && ArmorPotency > 0)
+                    return new Bonus(ArmorPotency, BonusType.Item, "Archipelago");
+                
+                else if (defense.IsSavingThrow() && Resilient > 0)
+                    return new Bonus(Resilient, BonusType.Item, "Archipelago");
+
+                return null;
+            };
+    }
+
+    /**
+    * Get this creature's skill bonuses (for qEffect.BonusToSkills)
+    */
+    public Func<Skill, Bonus?> GetSkillBonus()
+    {
+        return (skill) =>
+            {
+                if (SkillBonus > 0)
+                    return new Bonus(SkillBonus, BonusType.Item, "Archipelago");
+                return null;
+            };
+    }
+    
+    /**
+    * Get this creature's perception bonuses (for qEffect.BonusToPerception)
+    * Note: this is affected by the same types of items as skills, so its included in the same bonus
+    */
+    public Func<QEffect, Bonus?> GetPerceptionBonus()
+    {
+        return (qfSelf) =>
+            {
+                if (SkillBonus > 0)
+                    return new Bonus(SkillBonus, BonusType.Item, "Archipelago");
+                return null;
+            };
+    }
 
     /**
      * Apply archipelago item improvements to the characters
@@ -89,6 +149,12 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
                 case ArchipelagoClient.ApItemTypes.WeaponImprovement:
                     affectedPc.IncrementProgressiveWeaponBonuses();
                     break;
+                case ArchipelagoClient.ApItemTypes.ArmorImprovement:
+                    affectedPc.IncrementProgressiveArmorBonuses();
+                    break;
+                case ArchipelagoClient.ApItemTypes.SkillImprovement:
+                    affectedPc.SkillBonus++;
+                    break;
             }
         }
     }
@@ -96,10 +162,10 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
     /**
     * Helper method to Initialize all the Campaign Heroes quickly
     */
-    public static void InitializeCampaignHeroes(int level, int weaponPotency, int strikingRunes)
+    public static void InitializeCampaignHeroes(int level, int weaponPotency, int strikingRunes, int armorPotency, int resilientRunes, int skillBonus)
     {
         foreach (var id in CampaignHeroes)
-            Heroes[id] = new CharacterStatus(level, weaponPotency, strikingRunes);
+            Heroes[id] = new CharacterStatus(level, weaponPotency, strikingRunes, armorPotency, resilientRunes, skillBonus);
     }
 
     /**
@@ -109,7 +175,13 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
     {
         int start_level = Convert.ToInt32(slotData["start_level"]);
         int atk_bonus = Convert.ToInt32(slotData["start_atk_bonus"]);
-        InitializeCampaignHeroes(start_level, (atk_bonus + 1) / 2, atk_bonus / 2);
+        int armor_bonus = Convert.ToInt32(slotData["start_armor_bonus"]);
+        int skill_bonus = Convert.ToInt32(slotData["start_skill_bonus"]);
+        InitializeCampaignHeroes(start_level, 
+            // Potency/Striking bonuses = Total bonus / 2, then round up or down respectivley
+            (atk_bonus + 1) / 2, atk_bonus / 2,
+            (armor_bonus + 1) / 2, armor_bonus / 2,
+            skill_bonus);
     }
 
     /**
@@ -118,7 +190,7 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
     public static void InitializeCampaignHeroesAsMock()
     {
         foreach (var i in Enumerable.Range(0, CampaignHeroes.Length))
-            Heroes[CampaignHeroes[i]] = new CharacterStatus(1 + i, i / 2, i % 2);
+            Heroes[CampaignHeroes[i]] = new CharacterStatus(1 + i, i / 2, i % 2, i / 2, i % 2, i % 2);
     }
 
     /**
@@ -137,6 +209,9 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes)
                 {
                     qfSelf.BonusToAttackRolls = Heroes[owner.CreatureId].GetAttackBonus();
                     qfSelf.IncreaseItemDamageDieCount = Heroes[owner.CreatureId].GetAttackDiceBonus();
+                    qfSelf.BonusToDefenses = Heroes[owner.CreatureId].GetDefenseBonus();
+                    qfSelf.BonusToSkills = Heroes[owner.CreatureId].GetSkillBonus();
+                    qfSelf.BonusToPerception = Heroes[owner.CreatureId].GetPerceptionBonus();
                 }
                 else // Debug
                     qfSelf.Owner.Battle.Log($"Non-Hero progress adjustment: {owner.CreatureId}");

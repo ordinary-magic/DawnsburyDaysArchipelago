@@ -31,10 +31,14 @@ class LootShuffle(DefaultOnToggle):
     """Should the encounter rewards (potions, scrolls, etc) be shuffled?"""
     display_name = "Loot Shuffle"
 
-class GoldenCandelabra(DefaultOnToggle):
-    '''Placeholder: Does this archipelago include the golden candelabra campaign.
-    TODO: Should eventually be replaced with a more robust campaign selection menu.'''
-    visibility = Visibility.none # Do not show the option
+class Campaign(Choice):
+    '''Select which campaign(s) you want to play.
+       If you include DLC, you must own that dlc or the campaign will not generate.'''
+    display_name = "Campaign Selection"
+    option_Dawnsbury_Days = 0
+    option_Profane_Barrier = 1
+    option_Both = 2
+    default = 0
 
 class DeathLink(Toggle):
     """If enabled, losing an encounter will kill all other deathlink players, and other players can cause you to wipe."""
@@ -50,6 +54,7 @@ class DawnsburyOptions(PerGameCommonOptions):
     shuffle_difficulty: ShuffleDifficulty
     include_free_encounters: IncludeFreeEncounters
     loot_shuffle: LootShuffle
+    campaign: Campaign
     deathlink: DeathLink
     rng_seed: Seed # "seed" is an undocumented, already used field name in archipealgo, so we must use rng_seed instead.
 
@@ -60,6 +65,7 @@ def make_option_slot_data(options: DawnsburyOptions):
         'shuffle_difficulty': options.shuffle_difficulty.value,
         'include_free_encounters': options.include_free_encounters.value,
         'loot_shuffle': options.loot_shuffle.value,
+        'campaign': options.campaign.value,
         'deathlink': options.deathlink.value,
         'rng_seed': options.rng_seed.current_key,
     }

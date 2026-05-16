@@ -7,20 +7,21 @@ using Dawnsbury.Campaign.Encounters;
 using System.Data;
 using Dawnsbury.Core.Mechanics.Treasure;
 using Dawnsbury.Core.Mechanics.Enumerations;
+using Dawnsbury.Core.Mechanics.Rules;
 
 namespace DawnsburyArchipelago;
 
 /*
  * Class which will setup an randomized, Archipelago linked adventure path variant of an existing dawnsbury days campaign
  */
-public class ArchipelagoPathRandomizer(AdventurePath path, ArchipelagoClient archipelago) : AdventurePathRandomizer(path)
+public class ArchipelagoPathRandomizer(AdventurePath[] paths, ArchipelagoClient archipelago) : AdventurePathRandomizer(paths)
 {
     // Save a known reference to the archipelago client so we dont have to keep using the instance
     private readonly ArchipelagoClient archipelago = archipelago;
 
     /// Overwritable the base class metadata properties ///
-    protected override string Id => "Archipelago_" + inputId;
-    protected override string Name => " Archipelago " + inputName;
+    protected override string Id => "Archipelago";
+    protected override string Name => " Archipelago";
     protected override string Description => $"{inputName}, but the encounter order, enemies, and loot are all randomly determined.";
     protected override int StartLevel => endLevel; // start at the final level (for builds), and then level down the pcs in encounters
     protected override int StartingShopLevel => 1; // Dont let player buy high level items (TODO: placeholder for filtering shop inventory)
@@ -30,6 +31,18 @@ public class ArchipelagoPathRandomizer(AdventurePath path, ArchipelagoClient arc
      * Create a new adventure path that shuffles the order of the input adventure path encounters. 
      */
     public static new AdventurePath ShufflePath(AdventurePath input)
+    {
+        if (ArchipelagoClient.Instance == null)
+            throw new Exception("Tried to do archipelago path shuffle with a disconnected client.");
+
+        var client = ArchipelagoClient.Instance;
+        return new ArchipelagoPathRandomizer([input], client).ShufflePath(client.RngSeed);
+    }
+
+    /**
+     * Create a new adventure path that shuffles the order of the input adventure path encounters. 
+     */
+    public static AdventurePath ShufflePaths(AdventurePath[] input)
     {
         if (ArchipelagoClient.Instance == null)
             throw new Exception("Tried to do archipelago path shuffle with a disconnected client.");
@@ -86,12 +99,16 @@ public class ArchipelagoPathRandomizer(AdventurePath path, ArchipelagoClient arc
     }
 
     /**
-     * Remove any weapons from the loot pool, in order to not compete with progression bonuses.
+     * Remove any weapons/armor from the loot pool, in order to not compete with progression bonuses.
      */
     protected override IEnumerable<Item> FilterLoot(IEnumerable<Item> loot)
     {
-        // Eventually, will look for cold iron/anarchic weapons here, but there arent yet any of those
-        return loot.Where(item => !item.Traits.Contains(Trait.Weapon));
+        // Todo: make this more sophisticated about stripping runes/magic items/etc
+        return loot
+            .Where(item => !item.Traits.Contains(Trait.Weapon))
+            .Where(item => !item.Traits.Contains(Trait.Armor))
+            .Where(item => !item.Traits.Contains(Trait.Fundamental)); // Exclude all fundamental runes
+            //.Select(item => item.DuplicateWithoutRunes());
     }
 
     /**

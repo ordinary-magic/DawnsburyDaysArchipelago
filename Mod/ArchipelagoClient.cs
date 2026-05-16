@@ -32,14 +32,15 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     // Debug Property to enable simulated effects without an archipelago connection
     public static readonly bool MockArchipelago = false;
 
-    private const int PROTOCOL_VERSION = 10100; // 1.1.0 (2 digits per)
+    private const int PROTOCOL_VERSION = 10200; // 1.2.0 (2 digits per)
 
     // Enum defining the item types we get from the server
     public enum ApItemTypes
     {
         LevelUp,
         WeaponImprovement,
-        ArmorImprovement
+        ArmorImprovement,
+        SkillImprovement
     }
 
     // Enum defining the encounter difficulty options
@@ -50,6 +51,14 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         Difficult
     }
 
+    // Enum detailing the campaign selection options
+    public enum ApCampaignChoice
+    {
+        DawnsburyDays,
+        TheProfaneBarrier,
+        Both
+    }
+
     // Properties //
     public bool Ready { get; private set; } = false; // Is the client ready to go
     public static bool InstanceReady => Instance?.Ready ?? false; // static shortcut for ^
@@ -58,6 +67,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     public string RngSeed { get; set; } = "";
     public bool UseRandomEncounterOrder { get; private set; } = false;
     public ApEncounterDifficulty EncounterDifficulty = ApEncounterDifficulty.Balanced;
+    public ApCampaignChoice Campaign = ApCampaignChoice.DawnsburyDays;
     public bool IncludeFreeEncounters = false;
     public bool ShuffleEncounterLoot { get; private set; } = false;
     private long apBaseIDOffset = 0; // Archipelago ids must have a unique range, so we start at the offset
@@ -138,8 +148,9 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         // Archipelago requires unique keys across all games, so we solve this by defining a base offset for items/locations
         apBaseIDOffset = Convert.ToInt64(slotData["base_offset"]);
 
-        // get the rng seed
-        RngSeed = Convert.ToString(slotData["rng_seed"]) ?? RngSeed;
+        // get the custom rng seed, or default to the archipelago server's seed
+        RngSeed = Convert.ToString(slotData["rng_seed"]) ?? apSession.RoomState.Seed;
+        if (RngSeed == "") RngSeed = apSession.RoomState.Seed;
 
         // get the randomization settings
         UseRandomEncounterOrder = Convert.ToBoolean(slotData["encounter_shuffle"]);
@@ -148,6 +159,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         // Settings which weren't in the first version need default values in case of version mismatch
         EncounterDifficulty = (ApEncounterDifficulty) Convert.ToInt32(slotData.GetValueOrDefault("shuffle_difficulty") ?? EncounterDifficulty);
         IncludeFreeEncounters = Convert.ToBoolean(slotData.GetValueOrDefault("include_free_encounters") ?? IncludeFreeEncounters);
+        Campaign = (ApCampaignChoice) Convert.ToInt32(slotData.GetValueOrDefault("campaign") ?? Campaign);
 
         // Initialize the character's status
         CharacterStatus.InitializeCampaignHeroes(slotData);

@@ -81,6 +81,13 @@ Dawnsbury Days:
     'false': 0
     'true': 50
 
+  campaign:
+    # Select which campaign(s) you want to play.
+    # If you include DLC, you must own that dlc or the campaign will not generate.
+    dawnsbury_days: 50
+    profane_barrier: 0
+    both: 0
+
   deathlink:
     # If enabled, losing an encounter will kill all other deathlink players, and other players can cause you to wipe.
     'false': 50

@@ -18,7 +18,7 @@ public class DawnsburyArchipelagoLoader
 {
     // Save the randomized paths so we can reference them later
     public static AdventurePath? RandomDawnsburyDays { get; private set; }
-    public static AdventurePath? ArchipelagoDawnsburyDays { get; private set; }
+    public static AdventurePath? ArchipelagoCampaign { get; private set; }
 
     /**
      * Main entry point into the mod.
@@ -27,19 +27,17 @@ public class DawnsburyArchipelagoLoader
     public static void LoadMod()
     {
         // Check if archipelago is available to determine if we should load the offline or online adventure path
-        // TODO: test this swapping system
         if (ArchipelagoSetupMenu.TryConnectingToArchipelagoUsingCache())
         {
-            // Randomize and load the dawnsbury days adventure (for archipelago)
-            ArchipelagoDawnsburyDays = ArchipelagoPathRandomizer.ShufflePath(DawnsburyDaysAdventurePath.DawnsburyDaysPath);
-            ModdedAdventurePaths.AllModdedPaths.Add(ArchipelagoDawnsburyDays);
+            SwapToArchipelagoRandomizedPath();
         }
-        else
+        /*else
         {
+            // OBSOLETED: getting unweildy to maintain, its confusing and not especially useful, except for debugging. Will remove eventually.
             // Randomize and load the dawnsbury days adventure (in offline mode)
             RandomDawnsburyDays = AdventurePathRandomizer.ShufflePath(DawnsburyDaysAdventurePath.DawnsburyDaysPath);
             ModdedAdventurePaths.AllModdedPaths.Add(RandomDawnsburyDays);
-        }
+        }*/
 
         // Initialize the per-creature effects required by the mod
         ModManager.RegisterActionOnEachCreature(OnCreatureLoad);
@@ -67,15 +65,65 @@ public class DawnsburyArchipelagoLoader
                 ModdedAdventurePaths.AllModdedPaths.Remove(RandomDawnsburyDays);
                 RandomDawnsburyDays = null;
             }
-            if (ArchipelagoDawnsburyDays != null)
+            if (ArchipelagoCampaign != null)
             {
-                ModdedAdventurePaths.AllModdedPaths.Remove(ArchipelagoDawnsburyDays);
-                ArchipelagoDawnsburyDays = null;
+                ModdedAdventurePaths.AllModdedPaths.Remove(ArchipelagoCampaign);
+                ArchipelagoCampaign = null;
             }
 
-            ArchipelagoDawnsburyDays = ArchipelagoPathRandomizer.ShufflePath(DawnsburyDaysAdventurePath.DawnsburyDaysPath);
-            ModdedAdventurePaths.AllModdedPaths.Add(ArchipelagoDawnsburyDays);
+            // Load the archipelago campaign, using the correct settings
+            ArchipelagoCampaign = ArchipelagoClient.Instance.Campaign switch
+            {
+                ArchipelagoClient.ApCampaignChoice.DawnsburyDays =>
+                    ArchipelagoPathRandomizer.ShufflePath(DawnsburyDaysAdventurePath.DawnsburyDaysPath),
+
+                ArchipelagoClient.ApCampaignChoice.TheProfaneBarrier =>
+                    ArchipelagoPathRandomizer.ShufflePath(TryToLoadProfaneBarrierAdventurePath()),
+
+                ArchipelagoClient.ApCampaignChoice.Both =>
+                    ArchipelagoPathRandomizer.ShufflePaths([
+                        DawnsburyDaysAdventurePath.DawnsburyDaysPath,
+                        TryToLoadProfaneBarrierAdventurePath(),
+                    ]),
+                
+                _ => throw new InvalidOperationException($"Unknown Campaign: {ArchipelagoClient.Instance.Campaign}. Your mod might be out of date.")
+            };
+            ModdedAdventurePaths.AllModdedPaths.Add(ArchipelagoCampaign);
         }
+    }
+
+    /**
+     * Try to load the profane barrier adventure path if the dll is installed.
+     */
+    private static AdventurePath TryToLoadProfaneBarrierAdventurePath()
+    {
+        var path = LoadDlcAdventurePath("Dawnsbury.TheProfaneBarrier", "Dawnsbury.Dlc.TheProfaneBarrierAdventurePath", "ProfaneBarrierPath");
+        return path ??
+            throw new InvalidOperationException("Could not load The Profane Barrier for Archipelago: DLC is not installed.");
+    }
+
+    /**
+     * Check if a user has a dlc assembly installed, and extract the requested adventure path if they do
+     */
+    private static AdventurePath? LoadDlcAdventurePath(string dllName, string className, string propertyName)
+    {
+        var dlcAssembly = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == dllName);
+        if (dlcAssembly != null)
+        {
+            var pathType = dlcAssembly.GetType(className);
+            if (pathType != null)
+            {
+                var instanceField = pathType.GetField(propertyName, BindingFlags.Public | BindingFlags.Static);
+                if (instanceField != null)
+                    return (AdventurePath?)instanceField.GetValue(null);
+                    
+                throw new InvalidOperationException($"Could not find '{propertyName}' in class '{className}'");
+            }
+            
+            // Dlc assembly exists, but the adventure path doesnt?
+            throw new InvalidOperationException($"Could not find '{className}' in dll '{dllName}'");
+        }
+        return null;
     }
 
     /**
@@ -147,7 +195,7 @@ public class DawnsburyArchipelagoLoader
     {
         // Check if the archipelago campaign exists (is connected) and if we are currently in it
         return ArchipelagoClient.MockArchipelago ||
-            (ArchipelagoDawnsburyDays != null && CampaignState.Instance?.AdventurePath == ArchipelagoDawnsburyDays);
+            (ArchipelagoCampaign != null && CampaignState.Instance?.AdventurePath == ArchipelagoCampaign);
     }
 
     /**
@@ -191,6 +239,9 @@ public class DawnsburyArchipelagoLoader
                     var dlReason = ArchipelagoClient.GetAndClearDeathlinkRequest();
                     if (dlReason != "")
                         owner.Battle.EndTheGame(false, dlReason);
+
+                    // DEBUG - Auto win an encounter
+                    //owner.Battle.EndTheGame(true, "Cheating");
                 });
             },
         };

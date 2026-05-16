@@ -5,9 +5,11 @@ using Dawnsbury.Display.Controls;
 using Dawnsbury.Display.Illustrations;
 using Dawnsbury.Display.Text;
 using Dawnsbury.Phases.Popups;
+using HarmonyLib;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
@@ -26,22 +28,13 @@ public class ArchipelagoSetupMenu : WindowPhase
     private string status = ArchipelagoClient.InstanceReady ? "Connected!" : "Not Connected";
 
     public ArchipelagoSetupMenu()
-        : base(new Rectangle(Root.ScreenWidth / 2 - 700, Root.ScreenHeight / 2 - 450, 1400, 900))
+        : base(new Rectangle(Root.ScreenWidth / 2 - 450, Root.ScreenHeight / 2 - 240, 900, 480))
     {
-        // Try to pre-load cached connection info as a convenience
-        var info = LoadCachedConnectionInfo();
-        if (info != null)
-        {
-            serverTextbox.Text = info.Server;
-            portTextbox.Text = $"{info.Port}";
-            slotTextbox.Text = info.Slot;
-            passwordTextbox.Text = info.Password;
-        }
+        InitializeMenuFromCache();
     }
 
     /*
      * Big draw method to make the archipelago settings menu
-     * Note: menu layout designed by ai assistant because I dont have gui editing tools in vscode.
      */
     protected override void Draw(SpriteBatch sb, Game game, float elapsedSeconds)
     {
@@ -50,55 +43,53 @@ public class ArchipelagoSetupMenu : WindowPhase
         // Window dimensions
         Rectangle windowRect = Window;
         int padding = 20;
+        int labelWidth = 250;
+        int rowHeight = 50;
         int buttonHeight = 60;
-        int fieldHeight = 50;
-        int fieldSpacing = 15;
-        int statusHeight = 80;
         int buttonWidth = 200;
 
         // Calculate positions
         int currentY = windowRect.Y + padding;
-        int fieldWidth = windowRect.Width - 2 * padding;
-        int halfWidth = (fieldWidth - 10) / 2;
+        int paddedWidth = windowRect.Width - (2 * padding);
+        int textBoxWidth = paddedWidth - labelWidth - padding;
 
         // Title
-        Rectangle titleRect = new(windowRect.X + padding, currentY, fieldWidth, 60);
+        Rectangle titleRect = new(windowRect.X + padding, currentY, paddedWidth, rowHeight);
         Writer.DrawString("{b}Archipelago Multiplayer Connection{/b}", titleRect, null,
                         BitmapFontGroup.Mia48Font, Writer.TextAlignment.Middle);
-        currentY += 70;
+        currentY += rowHeight + padding;
 
         // Server field
-        Writer.DrawString("Server Address:", new Rectangle(windowRect.X + padding, currentY, halfWidth, fieldHeight),
+        Writer.DrawString("Server Address:", new Rectangle(windowRect.X + padding, currentY, labelWidth, rowHeight),
                         Color.Black, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Left);
-        serverTextbox.Draw(new Rectangle(windowRect.X + padding + halfWidth, currentY, halfWidth, fieldHeight));
-        currentY += fieldHeight + fieldSpacing;
+        serverTextbox.Draw(new Rectangle(windowRect.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
+        currentY += rowHeight + padding;
 
         // Port field
-        Writer.DrawString("Port:", new Rectangle(windowRect.X + padding, currentY, halfWidth, fieldHeight),
+        Writer.DrawString("Port:", new Rectangle(windowRect.X + padding, currentY, labelWidth, rowHeight),
                         Color.Black, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Left);
-        portTextbox.Draw(new Rectangle(windowRect.X + padding + halfWidth, currentY, halfWidth, fieldHeight));
-        currentY += fieldHeight + fieldSpacing;
+        portTextbox.Draw(new Rectangle(windowRect.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
+        currentY += rowHeight + padding;
 
         // Slot name field
-        Writer.DrawString("Slot Name:", new Rectangle(windowRect.X + padding, currentY, halfWidth, fieldHeight),
+        Writer.DrawString("Slot Name:", new Rectangle(windowRect.X + padding, currentY, labelWidth, rowHeight),
                         Color.Black, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Left);
-        slotTextbox.Draw(new Rectangle(windowRect.X + padding + halfWidth, currentY, halfWidth, fieldHeight));
-        currentY += fieldHeight + fieldSpacing;
+        slotTextbox.Draw(new Rectangle(windowRect.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
+        currentY += rowHeight + padding;
 
         // Password field
-        Writer.DrawString("Password (Optional):", new Rectangle(windowRect.X + padding, currentY, halfWidth, fieldHeight),
+        Writer.DrawString("Password:", new Rectangle(windowRect.X + padding, currentY, labelWidth, rowHeight),
                         Color.Black, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Left);
-        passwordTextbox.Draw(new Rectangle(windowRect.X + padding + halfWidth, currentY, halfWidth, fieldHeight));
-        currentY += fieldHeight + fieldSpacing + 20;
+        passwordTextbox.Draw(new Rectangle(windowRect.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
+        currentY += rowHeight + (2 * padding);
 
-        // Status display
-        Rectangle statusRect = new(windowRect.X + padding, currentY, fieldWidth, statusHeight);
-        Writer.DrawString(status, statusRect, ConnectionStatusColor(), BitmapFontGroup.Mia32Font, Writer.TextAlignment.Middle);
-        currentY += statusHeight + 20;
-
-        // Buttons
+        // Control Buttons & Status
         UI.DrawUIButton(new Rectangle(windowRect.X + padding, currentY, buttonWidth, buttonHeight), "Connect",
             ConnectButton, Writer.TextAlignment.Middle);
+
+        var statusLeftAnchor = windowRect.X + (windowRect.Width / 2) - (textBoxWidth / 2);
+        Rectangle statusRect = new(statusLeftAnchor, currentY, textBoxWidth, buttonHeight);
+        Writer.DrawString(status, statusRect, ConnectionStatusColor(), BitmapFontGroup.Mia32Font, Writer.TextAlignment.Middle);
 
         UI.DrawUIButton(new Rectangle(windowRect.X + windowRect.Width - padding - buttonWidth, currentY, buttonWidth, buttonHeight),
             "Close", delegate
@@ -186,9 +177,9 @@ public class ArchipelagoSetupMenu : WindowPhase
     }
 
     /*
-     * Attempt to load previous successful connection info from the cache file
+     * Attempt to read the cache file as a dictionary
      */
-    private static ApConnectionInfo? LoadCachedConnectionInfo()
+    private static Dictionary<string, string> TryToReadCacheFile()
     {
         if (File.Exists(ConnectionInfoPath))
             try
@@ -200,12 +191,40 @@ public class ArchipelagoSetupMenu : WindowPhase
                     .Where(parts => parts.Length == 2)
                     .ToDictionary(parts => parts[0].Trim(), parts => parts[1].Trim());
 
-
-                return new ApConnectionInfo(dict["server"], int.Parse(dict["port"]), dict["slot"], dict["password"]);
+                return dict;
             }
             // So many things can throw here, missing fields, parse errors, but we kinda dont care except that we failed to get any info
             catch (Exception) { }
-        return null;
+        return [];
+    }
+
+    /*
+     * Attempt to load previous successful connection info from the cache file
+     */
+    private static ApConnectionInfo? GetCachedConnectionInfo()
+    {
+        var dict = TryToReadCacheFile();
+        try
+        {
+            return new ApConnectionInfo(dict["server"], int.Parse(dict["port"]), dict["slot"], dict["password"]);
+        }
+        catch (KeyNotFoundException)
+        {
+            return null;
+        }
+    }
+
+    private void InitializeMenuFromCache()
+    {
+        // Try to pre-load cached connection info as a convenience
+        var cache = TryToReadCacheFile();
+
+        // Because GetValueSafe returns the type's default value on a cache miss,
+        //   it should be overwritten by the placeholder value we defined with the textbox
+        serverTextbox.Text = cache.GetValueSafe("server");
+        portTextbox.Text = cache.GetValueSafe("port");
+        slotTextbox.Text = cache.GetValueSafe("slot");
+        passwordTextbox.Text = cache.GetValueSafe("password");
     }
 
     /*
@@ -213,7 +232,7 @@ public class ArchipelagoSetupMenu : WindowPhase
      */
     public static bool TryConnectingToArchipelagoUsingCache()
     {
-        var connection = LoadCachedConnectionInfo();
+        var connection = GetCachedConnectionInfo();
         if (connection != null)
             ConnectToArchipelago(connection);
         return ArchipelagoClient.Instance != null;
@@ -224,7 +243,7 @@ public class ArchipelagoSetupMenu : WindowPhase
      */
     public static void DrawArchipelagoButton()
     {
-        UI.DrawUIButton(new Rectangle(Root.ScreenWidth - 500, Root.ScreenHeight - 500, 400, 90), delegate (Rectangle r)
+        UI.DrawUIButton(new Rectangle(Root.ScreenWidth - 500, Root.ScreenHeight - 600, 400, 90), delegate (Rectangle r)
         {
             Primitives.DrawImage(new ModdedIllustration("archipelago_logo.png"), new Rectangle(r.X + 10 + 20, r.Y + 20, r.Height - 40, r.Height - 40), null, scale: true);
             Rectangle rectangle = new(r.X + r.Height + 30, r.Y, r.Width - r.Height - 30, r.Height);

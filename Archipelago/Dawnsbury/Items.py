@@ -1,6 +1,7 @@
 from BaseClasses import Item, ItemClassification
 from itertools import product
 from typing import Dict, List
+import random
 
 from .CampaignData import get_chosen_campaign, DEFAULT_CHARACTERS
 from .Options import DawnsburyOptions
@@ -28,9 +29,8 @@ singleton_items: List[str] = [
 per_character_items: List[str] = [
     "Level Up",
     "Weapon Upgrade",
-    #"Weapon Potency Rune", # Eventually, can have both of these and switch based on settings
-    #"Weapon Striking Rune",
-    "Armor Upgrade"
+    "Armor Upgrade",
+    "Skill Upgrade",
 ]
 
 def expand_per_character_items() -> List[str]:
@@ -77,4 +77,20 @@ def create_items(player: int, options: DawnsburyOptions) -> List[DawnsburyItem]:
     for item_name in per_character:
         all_drops += create_items_for_each_character(item_name, DEFAULT_CHARACTERS, player)
 
-    return all_drops
+    return trim_item_list(all_drops, options)
+
+def trim_item_list(items: List[DawnsburyItem], options: DawnsburyOptions):
+    '''If the item list is too long (such as in the profane barrier), log it and reduce the list size'''
+    encounters = get_chosen_campaign(options).num_encounters
+    if encounters < len(items) + 1: # "You win" item is not in the random list, so we must add one here
+        extra = len(items) + 1 - encounters
+        print(f"Warning: found {extra} extra items, trimming drop list.")
+        
+        # Remove X randomly selected character drops from the lowest priority (last defined) bucket
+        cantidates = [make_character_item_name(item, name) for item, name in product([per_character_items[-1]], DEFAULT_CHARACTERS)]
+        to_remove = random.sample(cantidates, extra)
+        print(f"Removing the following items: {to_remove}.")
+        return [x for x in items if x.name not in to_remove]
+    return items
+        
+        

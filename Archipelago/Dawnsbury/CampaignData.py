@@ -3,8 +3,14 @@ from .Options import DawnsburyOptions
 
 DEFAULT_CHARACTERS = ["Annacoesta", "Scarlet", "Tok'dar", "Saffi"]
 
+# TODO: Support for progressive armor
+# TODO: Determine and implement filler items (need at least 3 bonus items for the Profame Barrier)
+
 class Campaign():
-    def __init__(self, name: str, encounter_count: int, start_level: int, end_level: int, start_atk_bonus: int, end_atk_bonus: int, 
+    def __init__(self, name: str, encounter_count: int, start_level: int, end_level: int,
+                 start_atk_bonus: int, end_atk_bonus: int,
+                 start_armor_bonus: int, end_armor_bonus: int,
+                 start_skill_bonus: int, end_skill_bonus: int,
                  potion_loot: List[Tuple[str, int]], scroll_loot: List[Tuple[str, int]],
                  weapon_loot: List[Tuple[str, int]], tool_loot: List[Tuple[str, int]],
                  characters: str = DEFAULT_CHARACTERS):
@@ -17,6 +23,14 @@ class Campaign():
         # Number of progressive weapon bonuses players start/end with (None, +1, Striking, +2 etc)
         self.start_atk_bonus = start_atk_bonus
         self.end_atk_bonus = end_atk_bonus
+
+        # Number of progressive armor bonuses players start/end with (None, +1, Resilient, +2 etc)
+        self.start_armor_bonus = start_armor_bonus
+        self.end_armor_bonus = end_armor_bonus
+
+        # Number of progressive item skill check bonuses players start/end with
+        self.start_skill_bonus = start_skill_bonus
+        self.end_skill_bonus = end_skill_bonus
 
         # Armor bonuses not in dd, will add if i do dlc later
 
@@ -42,13 +56,18 @@ class Campaign():
 
         # Add Weapon rune increases
         drops += ["Weapon Upgrade"] * (self.end_atk_bonus - self.start_atk_bonus)
+
+        # Add Armor rune increases
+        drops += ["Armor Upgrade"] * (self.end_armor_bonus - self.start_armor_bonus)
+        
+        # Add Skill item increases
+        drops += ["Skill Upgrade"] * (self.end_skill_bonus - self.start_skill_bonus)
         
         return drops
 
     def get_singe_drops(self, settings: DawnsburyOptions) -> List[str]:
         '''Return a list of standard item drops (Eg. +1 Longsword)'''
         return [] # Currently we dont randomize any of these
-
     
     def get_maximum_amount_of_drops(self) -> int:
         '''Assuming the most generous settings, what is the maximum possible number of drops this campaign can yield'''
@@ -57,9 +76,7 @@ class Campaign():
 
 def get_chosen_campaign(options: DawnsburyOptions) -> Campaign:
     '''Determine what campaign(s) are selected in the options.'''
-
-    # Currently we only support GC, so just return that.
-    return GoldenCandelabra
+    return All_Campaigns[options.campaign.value]
 
 def make_campaign_metadata(options: DawnsburyOptions) -> dict[str, object]:
     '''Package the campaign metadata that the mod needs to run.'''
@@ -68,14 +85,16 @@ def make_campaign_metadata(options: DawnsburyOptions) -> dict[str, object]:
         'start_level': campaign.start_level,
         'end_level': campaign.end_level,
         'start_atk_bonus': campaign.start_atk_bonus,
+        'start_armor_bonus': campaign.start_armor_bonus,
+        'start_skill_bonus': campaign.start_skill_bonus,
         'num_encounters': campaign.num_encounters
     }
 
-GoldenCandelabra: Campaign = Campaign(
-    "The Quest for the Golden Candelabra", 21, 1, 4, 0, 2,
+DawnsburyDays: Campaign = Campaign(
+    "The Quest for the Golden Candelabra", 21, 1, 4, 0, 2, 0, 0, 0, 0,
     [
+        ("Healing Potion (Lesser)", 9),
         ("Healing Potion (Minor)", 3),
-        ("Healing Potion (Lesser)", 13),
         ("Healing Potion (Moderate)", 3),
         ("Barkskin Potion", 2),
         ("Potion of Invisibility", 3),
@@ -105,6 +124,7 @@ GoldenCandelabra: Campaign = Campaign(
         ("+1 Striking Rapier", 1),
         ("+1 Longsword", 1),
         ("+1 Morningstar", 1),
+        ("+1 Greatclub", 1),
         ("+1 Earthbreaker", 1),
         ("+1 Heavy Crossbow", 1),
         ("+1 Striking Shorbow", 1),
@@ -112,11 +132,37 @@ GoldenCandelabra: Campaign = Campaign(
         ("+1 Striking Greatsword", 1),
         ("+1 Kukri", 1),
         ("+1 Striking Trident", 2),
+        ("+1 Handwraps of Mighty Blows", 1)
     ],
     [
+        ("+1 leather armor", 1),
         ("Expanded Healer's Tools", 1),
+        ("Gate Attenuator", 1),
+], [])
+
+ProfaneBarrier: Campaign = Campaign(
+    "The Profane Barrier", 24, 5, 8, 2, 2, 0, 2, 0, 1,
+    # TODO: put actual items here (or not, since they arent used.)
+    [], [], [], [], [
+
     ])
 
+    # TBD if this is playable by itself, or just as part of dd campaign.
+    # 24 Encounters, Rewards should be as follows:
+    # 3x4 level ups
+    # 1x4 Armor Resilence
+    # 1x4 Armor Resistance
+    # 3 ???
+    # 1 Beat the game
+
+MergedCampaign: Campaign = Campaign(
+    "Dawnsbury Days and the Profane Barrier", 
+    45, 1, 8, 0, 2, 0, 2, 0, 0, [], [], [], [], [])
+    # Merged campaign has same loot, except replaces the item bonuses 
+    #   and one beat the campaign with another set of level ups (4->5).
+
 All_Campaigns: List[Campaign] = [
-    GoldenCandelabra,
+    DawnsburyDays,
+    ProfaneBarrier,
+    MergedCampaign
 ]
