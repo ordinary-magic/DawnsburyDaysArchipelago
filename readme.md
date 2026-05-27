@@ -18,13 +18,13 @@ Currently, this mod only affects the base Dawnsbury Days campaign and Profane Ba
 ## Archipelago Gameplay Considerations
 * When you start the campaign you will plan your characters builds all the way to their max level (lvl 4/8), so that they can be automatically leveled by the game later.
 * New Item Bonuses are applied at the start of each of your turns, but levels can't change during combat.
-* In order for the item bonus progression to work, do not give your characters +1/striking weapons, magic armor, handwraps, or gate attenuators during character creation as these will override the awarded bonuses from archipelago.
+* In order for the item bonus progression to work, do not give your characters +1/striking weapons, magic armor, handwraps, or gate attenuators during character creation as these will override the awarded bonuses from archipelago (these are excluded from shops during the campaign).
 * When preparing spells, your spell prep menu will be for your max level, instead of your current one. When you enter a battle, you will only have the spells and slots appropriate to your level. EG: if you are 1st level, and would have 2 1st level slots, but you prepared animate dead, bane, and heal in the three slots in the menu, you will only have animate dead and bane after your level is scaled down.
-* Currently, I can only send messages during battles, in the chat log. This means that if you get any items you wont see them until the start of your turn, and you wont know what your rewards are for winning until you start the next fight.
+* You may equip any number of property runes onto weapons (regardless of fundamental runes), but characters who have not unlocked a high enough weapon potency upgrade to handle that many runes will not be able to weild them.
 
 ## Known Issues
 * When you beat a "final mission", it will take you to the credits screen. Once this is done you may resume play normally.
-* Because of how the progressive bonuses work, weapon runestones are currently unusable.
+* Sometimes (especially when first loading a save), items will show their equipped runestones as "inactive", this is a visual bug only and should not affect the item in combat.
 
 ## Building from Source
 To build either the apworld or mod yourself, run the build scripts in the respective directories. The Mod will attempt to isntall itself in your game's CustomMods folder automatically (directory can be configured via the [Dawnsbury.Mod.Targets](Mod/Dawnsbury.Mod.Targets) file), but can be manually copied from the genertaed CustomMods folder instead. The Arhcipelago multiworld must be installed manually, by double clicking the newly built file.

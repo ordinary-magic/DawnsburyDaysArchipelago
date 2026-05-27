@@ -2,12 +2,14 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using Dawnsbury.Auxiliary;
 using Dawnsbury.Campaign.Path;
 using Dawnsbury.Core.CharacterBuilder;
 using Dawnsbury.Core.CharacterBuilder.FeatsDb.Spellbook;
 using Dawnsbury.Core.Creatures;
 using Dawnsbury.Core.Mechanics.Enumerations;
 using Dawnsbury.Core.Mechanics.Treasure;
+using Dawnsbury.Display.Controls.Statblocks;
 
 namespace DawnsburyArchipelago;
 
@@ -23,14 +25,41 @@ public class Loot
      */
     public static Item AddApItemModifications(Item item)
     {
-        // We first ignore the property rune limit
-        //item.Traits.Add(Trait.IgnorePropertyRuneLimit);
-
         // Add a rule to restrict equiping items based on Archipealgo Rules
         var originalCanUse = item.CanUse ?? ((_ , _) => true);
         item.CanUse = (c, i) => originalCanUse(c, i) && APCanUseItem(c, i);
 
+        // Add a quick method to "activate" any runes which normally wouldnt be
+        var originalAfterModification = item.AfterModifiedWithModification;
+        item.AfterModifiedWithModification = (item, mod) => {
+            originalAfterModification?.Invoke(item, mod);
+            MakeApRunesActive(item);
+        };
+
         return item;
+    }
+
+    /**
+     * After we add a runestone to an item, we need to activate it
+     */
+    public static void MakeApRunesActive(Item item)
+    {
+        // Only if we are in the campaign and the correct mode, and the item has inactive runes
+        if (ShouldIgnorePropretyRuneLimit() &&
+            item.Runes.Count != item.ActiveRunes.Count)
+        {
+            // Manually activate all "inactive" runes
+            foreach(var rune in item.Runes.Where(rune => !item.ActiveRunes.Contains(rune)))
+            {
+                rune.RuneProperties?.ApplyRuneOntoItem(rune, item);
+                item.ActiveRunes.Add(rune);
+            }
+
+            // Also fix the item's name
+            item.ProsaicName = item.ProsaicName
+                .Replace("{Gray}{strike}", "")
+                .Replace("{/strike}{/}", "");
+        }
     }
 
     /**
@@ -44,42 +73,78 @@ public class Loot
                 return false;
         
         // Only affect items in an archipealgo campaign
-        if (DawnsburyArchipelagoLoader.IsArchipelagoCampaignActive())
+        if (ShouldIgnorePropretyRuneLimit())
         {
-            // Only affect items in runs where we dont drop potency runes
-            if (!ArchipelagoClient.InstancePotencyRunes)
+            // Check if the character is a pc
+            if (TryGetCharacterStatus(character.Sheet) is {} status)
             {
-                // Check if the character is a pc
-                if (TryGetCharacterStatus(character.Sheet) is {} status)
-                {
-                    // Calculate the potency of the character's items vs the number of equipped runes.
-                    int potency = 0;
-                    var numPropertyRunes = item.Runes
-                        .Where(rune => rune.RuneProperties != null)
-                        .Count(rune => rune.RuneProperties!.RuneKind == RuneKind.ArmorProperty
-                                    || rune.RuneProperties!.RuneKind == RuneKind.WeaponProperty);
+                // Calculate the potency of the character's items vs the number of equipped runes.
+                int potency = 0;
+                var numPropertyRunes = item.Runes
+                    .Where(rune => rune.RuneProperties != null)
+                    .Count(rune => rune.RuneProperties!.RuneKind == RuneKind.ArmorProperty
+                                || rune.RuneProperties!.RuneKind == RuneKind.WeaponProperty);
 
-                    // Item is armor
-                    if (item.ArmorProperties != null)
-                        potency = status.ArmorPotency;
+                // Item is armor
+                if (item.ArmorProperties != null)
+                    potency = status.ArmorPotency;
 
-                    // Item is a weapon
-                    if (item.WeaponProperties != null)
-                        potency = status.WeaponPotency;
+                // Item is a weapon
+                if (item.WeaponProperties != null)
+                    potency = status.WeaponPotency;
 
-                    // In either case, tell it to ignore the property rune limit
-                    // Doesn't seem to do anything?
-                    //if (item.ArmorProperties != null || item.WeaponProperties != null)
-                    //    item.Traits.Add(Trait.IgnorePropertyRuneLimit);
+                // In either case, if the bonus is > 0, the item is magical
+                if (potency > 0 && !item.Traits.Contains(Trait.Magical))
+                    item.Traits.Add(Trait.Magical);
 
-                    // Ensure we have enough weapon potency to hold something with this many runes
-                    return potency >= numPropertyRunes;
-                }
+                // Ensure we have enough weapon potency to hold something with this many runes
+                return potency >= numPropertyRunes;
             }
         }
 
         // If not in a pc in an archipelago campaign, dont restrict their equipment.
         return true;
+    }
+
+    /**
+     * Quick helper method to check if we should ignore the property rune limit on items
+     */
+    public static bool ShouldIgnorePropretyRuneLimit()
+    {
+        return DawnsburyArchipelagoLoader.IsArchipelagoCampaignActive() &&
+            !ArchipelagoClient.InstancePotencyRunes;
+    }
+
+    /**
+     * Replace the item's rune stat block generator with one that will show our custom runes as active.
+     * Note: ideally, this should be handled already by adding the rune to ActiveRunes, but for some reason that doesnt work 
+     */
+    public static void ReplaceRunestoneRuleTextGenerator()
+    {
+        //ItemStatblock.ItemStatblockSectionGenerators.Add(
+        // Copy of ItemStatblock's rune block generator section, with a minor change
+        var newRuneStatblock = new ItemStatblockSectionGenerator("Runes", delegate (Item item)
+        {
+            string text = "";
+            foreach (Item rune in item.Runes.Concat(item.BakedInRunes))
+            {
+                var runeProperties = rune.RuneProperties;
+                if (runeProperties != null && (runeProperties.FundamentalLevel <= 0 || item.HasTrait(Trait.HandwrapsOfMightyBlows)))
+                {
+                    // Add an extra check to the "inactive" rune setting so that it doesnt trigger during archipelago runs
+                    if (!item.ActiveRunes.Contains(rune) && !item.BakedInRunes.Contains(rune) && !ShouldIgnorePropretyRuneLimit())
+                        text = text + "{Gray}{b}" + rune.RuneProperties!.Prefix.Capitalize() + " (inactive).{/b} " + rune.RuneProperties.RulesText + "{/}\n" ;
+                    else
+                        text = text + "{b}" + rune.RuneProperties!.Prefix.Capitalize() + ".{/b} " + rune.RuneProperties.RulesText + "\n";
+                }
+            }
+
+            return (!string.IsNullOrWhiteSpace(text)) ? new StatblockGeneratedSection("RUNES AND MATERIAL", text) : null;
+        });
+
+        // find the old rune statblock in the list and replace it
+        int index = ItemStatblock.ItemStatblockSectionGenerators.Index().First(pair => pair.Item.Name == "Runes").Index;
+        ItemStatblock.ItemStatblockSectionGenerators[index] = newRuneStatblock;
     }
 
     /**
@@ -150,7 +215,7 @@ public class Loot
     public static IEnumerable<Item> FilterLoot(IEnumerable<Item> loot)
     {
         return loot
-        
+
             // Pop all runestones off of dropped items
             .SelectMany(item => item.SelfAndIncludedItems)
             .Select(item => item.DuplicateWithout(ItemModificationKind.Rune))

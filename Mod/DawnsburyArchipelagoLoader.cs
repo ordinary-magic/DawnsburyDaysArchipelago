@@ -48,6 +48,7 @@ public class DawnsburyArchipelagoLoader
         // Register the drawing modifications used by the mod
         //ModManager.Frontend.RegisterAtEndOfDrawFrame(ApMessages.DrawToasts);
         ModManager.Frontend.RegisterAtEndOfDrawInPhase<MainMenuPhase>(ArchipelagoSetupMenu.DrawArchipelagoButton);
+        Loot.ReplaceRunestoneRuleTextGenerator();
 
         LoadHarmony();
     }
