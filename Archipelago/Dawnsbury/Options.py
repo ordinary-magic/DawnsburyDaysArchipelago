@@ -31,6 +31,12 @@ class LootShuffle(DefaultOnToggle):
     """Should the encounter rewards (potions, scrolls, etc) be shuffled?"""
     display_name = "Loot Shuffle"
 
+class LootRandomizer(Toggle):
+    """Should the encounter rewards (scrolls, runestones, weapons, etc) be randomized?
+        TODO: implement this in the client"""
+    display_name = "Loot Randomizer"
+    visibility = Visibility.none
+
 class Campaign(Choice):
     '''Select which campaign(s) you want to play.
        If you include DLC, you must own that dlc or the campaign will not generate.'''
@@ -39,6 +45,10 @@ class Campaign(Choice):
     option_Profane_Barrier = 1
     option_Both = 2
     default = 0
+
+class PotencyRunes(Toggle):
+    """EXPERIMENTAL: If enabled, archipelago will drop fundamental runestones in the encounter loot instead of automatically giving item bonuses."""
+    display_name = "Use Fundamental Runestones"
 
 class DeathLink(Toggle):
     """If enabled, losing an encounter will kill all other deathlink players, and other players can cause you to wipe."""
@@ -54,6 +64,8 @@ class DawnsburyOptions(PerGameCommonOptions):
     shuffle_difficulty: ShuffleDifficulty
     include_free_encounters: IncludeFreeEncounters
     loot_shuffle: LootShuffle
+    loot_randomizer: LootRandomizer
+    potency_runes: PotencyRunes
     campaign: Campaign
     deathlink: DeathLink
     rng_seed: Seed # "seed" is an undocumented, already used field name in archipealgo, so we must use rng_seed instead.
@@ -65,7 +77,9 @@ def make_option_slot_data(options: DawnsburyOptions):
         'shuffle_difficulty': options.shuffle_difficulty.value,
         'include_free_encounters': options.include_free_encounters.value,
         'loot_shuffle': options.loot_shuffle.value,
+        'loot_randomizer': options.loot_randomizer.value,
         'campaign': options.campaign.value,
         'deathlink': options.deathlink.value,
+        'potency_runes': options.potency_runes.value,
         'rng_seed': options.rng_seed.current_key,
     }

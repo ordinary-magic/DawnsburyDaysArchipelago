@@ -12,6 +12,7 @@ using Dawnsbury.Core.Mechanics.Core;
 using Dawnsbury.Core.Mechanics.Enumerations;
 using Dawnsbury.Core.Mechanics.Treasure;
 using Dawnsbury.Display.Illustrations;
+using Microsoft.Xna.Framework.Graphics;
 
 namespace DawnsburyArchipelago;
 
@@ -30,32 +31,44 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
     // Static tracker for the status of the campaign heroes, using creature id's as keys
     public static ConcurrentDictionary<CreatureId, CharacterStatus> Heroes { get; } = [];
 
-    // The default creature ID's of the party in dawnsbury days
+    // The default creature ID's of the party in dawnsbury days, in slot order
     public static readonly CreatureId[] CampaignHeroes = [CreatureId.Annacoesta, CreatureId.Scarlet, CreatureId.Tokdar, CreatureId.Saffi];
 
     /**
     * Progressivley improve the status of the weapon
     */
-    public void IncrementProgressiveWeaponBonuses()
+    public void IncrementProgressiveWeaponBonuses(bool canIssuePermanant)
     {
         // Weapon improvements always alternate between +1 and striking in game, so match that here
         if (WeaponPotency == Striking)
+        {
             WeaponPotency++;
+            if (canIssuePermanant) Loot.DropFundamentalRunestone(WeaponPotency, true, true);
+        }
         else
+        {
             Striking++;
+            if (canIssuePermanant) Loot.DropFundamentalRunestone(Striking, false, true);
+        }
     }
 
     
     /**
     * Progressivley improve the status of the armor
     */
-    public void IncrementProgressiveArmorBonuses()
+    public void IncrementProgressiveArmorBonuses(bool canIssuePermanant)
     {
         // Armor improvements always alternate between +1 and resilient in game, so match that here
         if (ArmorPotency == Resilient)
+        {
             ArmorPotency++;
+            if (canIssuePermanant) Loot.DropFundamentalRunestone(ArmorPotency, true, false);
+        }
         else
+        {
             Resilient++;
+            if (canIssuePermanant) Loot.DropFundamentalRunestone(Resilient, false, false);   
+        }
     }
 
     /**
@@ -95,7 +108,13 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
         return (qfSelf, combatAction, defense) =>
             {
                 if (defense == Defense.AC && ArmorPotency > 0)
-                    return new Bonus(ArmorPotency, BonusType.Item, "Archipelago");
+                {
+                    // If we give an item bonus, it will be eaten by the armor's base bonus
+                    //  Therefore, apply it as an untyped bonus instead, minus any existing rune bonus
+                    int existing_item_bonus = qfSelf.Owner.Armor.Item?.ArmorProperties?.ItemBonus ?? 0;
+                    if (ArmorPotency > existing_item_bonus)
+                        return new Bonus(ArmorPotency - existing_item_bonus, BonusType.Untyped, "Archipelago");
+                }
                 
                 else if (defense.IsSavingThrow() && Resilient > 0)
                     return new Bonus(Resilient, BonusType.Item, "Archipelago");
@@ -133,30 +152,44 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
 
     /**
      * Apply archipelago item improvements to the characters
+     *  returns true/false if the item is a permanent item drop
      */
-    public static void ApplyArchipelagoItem(int itemId)
+    public static bool ApplyArchipelagoItem(int itemId, bool canIssuePermanant)
     {
         // Items are stored as pc1-level, pc2-level, pc3-level, pc4-level, pc1-weapon etc.
         //  Thus, we can divide by four, and use the remainder as a pc index and the quotent as an item index. 
+        var type = (ArchipelagoClient.ApItemTypes) (itemId / 4);
         var affectedPc = Heroes[CampaignHeroes[itemId % 4]];
         lock (affectedPc)
         {
-            switch ((ArchipelagoClient.ApItemTypes)(itemId / 4))
+            switch (type)
             {
                 case ArchipelagoClient.ApItemTypes.LevelUp:
                     affectedPc.Level++;
                     break;
                 case ArchipelagoClient.ApItemTypes.WeaponImprovement:
-                    affectedPc.IncrementProgressiveWeaponBonuses();
+                    affectedPc.IncrementProgressiveWeaponBonuses(canIssuePermanant);
                     break;
                 case ArchipelagoClient.ApItemTypes.ArmorImprovement:
-                    affectedPc.IncrementProgressiveArmorBonuses();
+                    affectedPc.IncrementProgressiveArmorBonuses(canIssuePermanant);
                     break;
                 case ArchipelagoClient.ApItemTypes.SkillImprovement:
                     affectedPc.SkillBonus++;
                     break;
             }
         }
+        return IsItemTypeSavedInInventory(type);
+    }
+
+    /**
+    * Helper method to identify if a provided item type would be saved in the character's inventory
+    */
+    public static bool IsItemTypeSavedInInventory(ArchipelagoClient.ApItemTypes type)
+    {
+        return ArchipelagoClient.InstancePotencyRunes && (
+            type == ArchipelagoClient.ApItemTypes.ArmorImprovement ||
+            type == ArchipelagoClient.ApItemTypes.WeaponImprovement
+        );
     }
 
     /**
@@ -207,9 +240,17 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
                 // Some friendly npc's seem to have persistent sheets, but we only want to do this for pcs
                 if (CampaignHeroes.Contains(owner.CreatureId))
                 {
-                    qfSelf.BonusToAttackRolls = Heroes[owner.CreatureId].GetAttackBonus();
-                    qfSelf.IncreaseItemDamageDieCount = Heroes[owner.CreatureId].GetAttackDiceBonus();
-                    qfSelf.BonusToDefenses = Heroes[owner.CreatureId].GetDefenseBonus();
+                    // Add the automatic item bonuses if we are in that configuration
+                    if (!ArchipelagoClient.InstancePotencyRunes)
+                    {
+                        qfSelf.BonusToAttackRolls = Heroes[owner.CreatureId].GetAttackBonus();
+                        qfSelf.IncreaseItemDamageDieCount = Heroes[owner.CreatureId].GetAttackDiceBonus();
+                        qfSelf.BonusToDefenses = Heroes[owner.CreatureId].GetDefenseBonus();
+
+                        // Upgrade any shields the user is holding
+                        Loot.UpgradeShields(qfSelf.Owner, Heroes[owner.CreatureId].ArmorPotency);
+                    }
+
                     qfSelf.BonusToSkills = Heroes[owner.CreatureId].GetSkillBonus();
                     qfSelf.BonusToPerception = Heroes[owner.CreatureId].GetPerceptionBonus();
                 }

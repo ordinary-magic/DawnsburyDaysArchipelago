@@ -1,13 +1,11 @@
 using System;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Collections.Concurrent;
 using Archipelago.MultiClient.Net;
 using Archipelago.MultiClient.Net.Enums;
 using Archipelago.MultiClient.Net.Models;
 using Archipelago.MultiClient.Net.Helpers;
 using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
-using Archipelago.MultiClient.Net.MessageLog.Messages;
 using Archipelago.MultiClient.Net.Packets;
 using System.Linq;
 
@@ -32,7 +30,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     // Debug Property to enable simulated effects without an archipelago connection
     public static readonly bool MockArchipelago = false;
 
-    private const int PROTOCOL_VERSION = 10200; // 1.2.0 (2 digits per)
+    private const int PROTOCOL_VERSION = 10300; // 1.03.00
 
     // Enum defining the item types we get from the server
     public enum ApItemTypes
@@ -70,10 +68,15 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     public ApCampaignChoice Campaign = ApCampaignChoice.DawnsburyDays;
     public bool IncludeFreeEncounters = false;
     public bool ShuffleEncounterLoot { get; private set; } = false;
+    public bool RandomizeEncounterLoot { get; private set;} = false;
     private long apBaseIDOffset = 0; // Archipelago ids must have a unique range, so we start at the offset
+    public bool PotencyRunes { get; private set; } = false;
+    public static bool InstancePotencyRunes => Instance?.PotencyRunes ?? false; // static shortcut for PotencyRunes
 
     // State Data //
     public int EncountersCleared { get; set; } = 0; // TODO (Eventually): sync this with the server to allow resuming runs. 
+    public int ItemsRecieved { get; set; } = 0; // Total amount of items recieved from archipelago
+    public int InventoryItemsSaved { get; set; } = 0; // Number of items recieved which are saved in the character inventories
 
     // Constant Fields //
     private readonly ArchipelagoSession apSession = ArchipelagoSessionFactory.CreateSession(connection.Server, connection.Port);
@@ -86,9 +89,6 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     private static string TPKReason { get; set; } = "";
     private int deathLinkCounter = 0;
     private int deathLinkAmount = 1;
-
-    // Message Queue //
-    public static ConcurrentQueue<string> MessageQueue { get; } = new();
 
     // Methods //
     /*
@@ -141,9 +141,9 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         // Check if the version matches (handle old versions of the code)
         int serverVersion = Convert.ToInt32(slotData.GetValueOrDefault("version") ?? 0);
         if (serverVersion < PROTOCOL_VERSION)
-            MessageQueue.Enqueue($"Archipelago Version Mismatch: Your Archipelago Server is out of date; some features might not work correctly.");
+            ApMessages.LogError($"Archipelago Version Mismatch: Your Archipelago Server is out of date; some features might not work correctly.");
         else if (serverVersion > PROTOCOL_VERSION)
-            MessageQueue.Enqueue($"Archipelago Version Mismatch: Your Game Mod is out of date; some features might not work correctly.");
+            ApMessages.LogError($"Archipelago Version Mismatch: Your Game Mod is out of date; some features might not work correctly.");
 
         // Archipelago requires unique keys across all games, so we solve this by defining a base offset for items/locations
         apBaseIDOffset = Convert.ToInt64(slotData["base_offset"]);
@@ -160,6 +160,8 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         EncounterDifficulty = (ApEncounterDifficulty) Convert.ToInt32(slotData.GetValueOrDefault("shuffle_difficulty") ?? EncounterDifficulty);
         IncludeFreeEncounters = Convert.ToBoolean(slotData.GetValueOrDefault("include_free_encounters") ?? IncludeFreeEncounters);
         Campaign = (ApCampaignChoice) Convert.ToInt32(slotData.GetValueOrDefault("campaign") ?? Campaign);
+        PotencyRunes = Convert.ToBoolean(slotData.GetValueOrDefault("potency_runes"));
+        RandomizeEncounterLoot = Convert.ToBoolean(slotData.GetValueOrDefault("loot_randomizer"));
 
         // Initialize the character's status
         CharacterStatus.InitializeCampaignHeroes(slotData);
@@ -180,16 +182,21 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         }
 
         // Add our message handling
-        apSession.MessageLog.OnMessageReceived += OnMessage;
+        apSession.MessageLog.OnMessageReceived += ApMessages.OnApMessage;
+
+        // Add an error logger to watch for if the socket is closed
+        apSession.Socket.SocketClosed += reason => ApMessages.LogError("Lost Connection to Server: " + reason);
 
         // Initialize the callback
         apSession.Items.ItemReceived += NewItemRecieved;
 
         // Initialize the data storage if it doesnt already have a value
         apSession.DataStorage[Scope.Slot, "encounters_cleared"].Initialize(0);
+        apSession.DataStorage[Scope.Slot, "inventory_items_saved"].Initialize(0);
 
         // Load saved progress from the server
         EncountersCleared = apSession.DataStorage[Scope.Slot, "encounters_cleared"];
+        InventoryItemsSaved = apSession.DataStorage[Scope.Slot, "inventory_items_saved"];
         CatchUpToOldItems();
 
         // If we are successfully configured, we are the relevant instance
@@ -198,40 +205,62 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     }
 
     /*
-    * Callback to process a message from the server
-    */
-    private void OnMessage(LogMessage message)
-    {
-        // Ignore everything but sent/recieved items, as they are really spammy
-        if (message is ItemSendLogMessage)
-            MessageQueue.Enqueue(message.ToString());
-    }
-
-    /*
     * Callback to process an item received event from the server
     */
-    private void NewItemRecieved(ReceivedItemsHelper helper)
+    private async void NewItemRecieved(ReceivedItemsHelper helper)
     {
-        GiveArchipelagoItem(helper.PeekItem());
-        helper.DequeueItem();
+        // Process all pending items
+        while (helper.PeekItem() is ItemInfo item)
+        {
+            // Pop the item off of the queue
+            helper.DequeueItem();
+
+            // Skip processing if we already have this item
+            if (helper.Index <= ItemsRecieved) continue;
+            
+            // Increment the item count
+            ItemsRecieved++;
+
+            // Process the new item
+            await GiveArchipelagoItem(item);
+        }
     }
 
     /*
      * Give an archipelago item to the player
      * Is asynchronous incase GiveItem is blocked so as to not softlock the archipelago client.
      */
-    private async void GiveArchipelagoItem(ItemInfo item)
+    private async Task<bool> GiveArchipelagoItem(ItemInfo item, bool canIssuePermanant = true)
     {
-        int id = (int)(item.ItemId - apBaseIDOffset);
-        MessageQueue.Enqueue($"Got {item.ItemName} from {item.Player.Name}!");
-        await Task.Run(() => CharacterStatus.ApplyArchipelagoItem(id));
+        ApMessages.LogEvent($"Got {item.ItemName} from {item.Player.Name}!");
+        bool permanent = await Task.Run(() =>
+            CharacterStatus.ApplyArchipelagoItem(GetItemId(item), canIssuePermanant));
+        if (permanent && canIssuePermanant) InventoryItemsSaved++;
+        return permanent;
     }
 
-    private void CatchUpToOldItems()
+    /*
+     * Catch up to all items we recieved before this instance started running
+     */
+    private async void CatchUpToOldItems()
     {
-        foreach (var item in apSession.Items.AllItemsReceived)
-            GiveArchipelagoItem(item);
+        // Clear all pending item updates
+        List<ItemInfo> catchupList = [];
+        while (apSession.Items.DequeueItem() is ItemInfo item)
+            catchupList.Add(item);
+
+        // Count how many items we found
+        ItemsRecieved = catchupList.Count;
+        int savedItemsDiscovered = 0;
+
+        // Process the item
+        foreach (var item in catchupList)
+            if (await GiveArchipelagoItem(item, savedItemsDiscovered > InventoryItemsSaved))
+                savedItemsDiscovered++;
     }
+
+    // Get the integer id of an archipelago item
+    private int GetItemId(ItemInfo item) => (int)(item.ItemId - apBaseIDOffset);
 
     /*
      * Tell archipelago that we cleared the next encounter
@@ -268,7 +297,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
             }
             catch (Exception e)
             {
-                MessageQueue.Enqueue($"Couldn't Connect to Archipelago: {e.Message}");
+                ApMessages.LogError($"Couldn't Connect to Archipelago: {e.Message}");
             }
         }
         return result;
@@ -323,5 +352,29 @@ public class ArchipelagoClient(ApConnectionInfo connection)
             {
                 Status = ArchipelagoClientState.ClientGoal
             });
+    }
+
+    
+    /*
+     * Get specific slot data from archipelago, or the default value if that fails
+     */
+    public T? GetSlotData<T>(string id)
+    {
+        try
+        {
+            return apSession.DataStorage[Scope.Slot, id].To<T>();
+        }
+        catch (Exception)
+        {
+            return default;
+        }
+    }
+
+    /*
+     * Save the inventory state to the archipelago server's data storage
+     */
+    public void SaveInventory()
+    {
+        apSession.DataStorage[Scope.Slot, "inventory_items_saved"] = InventoryItemsSaved;
     }
 }

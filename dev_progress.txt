@@ -1,0 +1,87 @@
+v1:
+ x Write and Design the code
+ x Test Offline, Non-Archipelago Shuffle mode (seems good?)
+ x Test archipelago generation (generates successfully)
+ x Test buffs and integrations via mock
+ x Test Loot Shuffler
+ x Run server and Connect to Client
+ X Test that level mods and qeffects are restricted to the archipelago campaign
+ x Test In Full Archipelago
+   x Test Stat Adjustments
+     x Start of Turn (weapons)
+     x Start of Combat (Level)
+   x Test sending locations
+   x Test getting items
+   x Test Deathlink
+   x Test loot and encounter shuffle settings
+   x Test completing game
+   x Test archipelago log and chat messages
+ x Write the Readme
+ x Test Offline Progress tracking & Save/Resume
+
+v1.1:
+ x Version Mismatch Check
+ x Encounter Order Options
+ x Harmony Dll Conflict
+ x Add "Gameplay Considerations" section of readme to steam description
+
+v1.2:
+ x Integrate Profane Barrier DLC
+   x Build means to check existence of and load from dlc dll
+   x Add DLC campaign metadata to archipelago
+   x Design and add new loot bonuses
+   x Make campaign selection options
+   x Implement merged campaign
+   x Test DLC/merged campaigns in an archipelago
+ x Remove offline mode from official release. (add debug mode - only in build)
+ x bugs:
+   x Heaven is empty and last? (level 7/8 not splitting correctly)
+     x Chapters are opened by cutscenes and encounters, not by narration. Need mechanism to address this
+   x Find a seed to use such that fine? does not re-randomize (should use world seed)
+
+v1.3 The Runestone, Shield, and Notifications Update:
+ x Determine means by which to handle runes
+ x Add custom rune attachment logic to allow any rune to be attached to all weapons
+ x Add custom item equip rules to block equipping items for which you have less potency than the equipped runes.
+ x Test rune equip rules
+ x Update shield hardness with armor runes
+ x Test automatic shield hardness system
+ x Implement "drop fundamental runes" archipelago alternate setting
+ x Test that rune drops work
+ x Add an Icon to AP Campaign
+ x Make AP updates more immediate
+   x Add Toasts
+   x Make messages happen every single turn (not just player)
+ x Automatically filtered shop contents (needs test)
+ x Do full merged campaign test w stop/starts in standard rune mode
+ x Bug: merged campaign in simple balance mode ran out of level 4 encounters
+ x Bug: Merged Campaign's ending level was incorrect
+ - Bug: Items show runes as "disabled" in equipment screen, visual bug only. (low prio)
+ x Bug: Items are not cleared from the queue if recieved before the game began
+ x Find way to close archipelago connection automatically when game is closed?
+
+v1.4 Further Campaigns:
+ - Random character builds (using game defaults for now).
+ - Play the newest campaign casually.
+ - Add Good little children
+ - Add Four leaf clover
+
+v1.5 More Random Stuff: (possibly first depending on when four leaf clover is released)
+ - Community built random builds.
+ - Option to Include Random Encounters in pool over campaign encounters of same level?
+ - Add setting and means to randomize loot within categories (ie random lvl 1 spell instead of heal, random property runestones)
+
+Ideas for future versions:
+ - Add option to apply level ups more evenly (all at once?).
+ - Roguelike Integration? (let it handle its own encounter order and loot, but can do level scaling - ask dev for collab)
+ - Add common reference file to synchronize location/item ids between apworld and mod
+ - Add More Locations and Rewards
+   - Need to be granular so as to avoid awarding 10 checks on level clear
+   - Achievements are a good source of potential checks, but need to be filtered
+   - End of Battle Loot is super customizable, and would add more variety to reward quality
+ - Investigate per enemy rewards
+ - Investigate locking basic actions (cast/strike) behind drops.
+
+Random Small Bugs:
+ - Archipealgo button on-hover tooltip is missing (is in code, idk why it doesnt work - probably requires more extensive patching)
+ - Spell prep menu is the incorrect level because arhcipelago treats chars as max level outside of encounters.

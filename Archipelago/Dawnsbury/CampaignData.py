@@ -3,9 +3,6 @@ from .Options import DawnsburyOptions
 
 DEFAULT_CHARACTERS = ["Annacoesta", "Scarlet", "Tok'dar", "Saffi"]
 
-# TODO: Support for progressive armor
-# TODO: Determine and implement filler items (need at least 3 bonus items for the Profame Barrier)
-
 class Campaign():
     def __init__(self, name: str, encounter_count: int, start_level: int, end_level: int,
                  start_atk_bonus: int, end_atk_bonus: int,
@@ -87,6 +84,9 @@ def make_campaign_metadata(options: DawnsburyOptions) -> dict[str, object]:
         'start_atk_bonus': campaign.start_atk_bonus,
         'start_armor_bonus': campaign.start_armor_bonus,
         'start_skill_bonus': campaign.start_skill_bonus,
+        'end_atk_bonus': campaign.end_atk_bonus,
+        'end_armor_bonus': campaign.end_armor_bonus,
+        'end_skill_bonus': campaign.end_skill_bonus,
         'num_encounters': campaign.num_encounters
     }
 
@@ -152,7 +152,7 @@ ProfaneBarrier: Campaign = Campaign(
     # 3x4 level ups
     # 1x4 Armor Resilence
     # 1x4 Armor Resistance
-    # 3 ???
+    # 3 Item Drops
     # 1 Beat the game
 
 MergedCampaign: Campaign = Campaign(

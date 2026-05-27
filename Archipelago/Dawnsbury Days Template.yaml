@@ -81,6 +81,11 @@ Dawnsbury Days:
     'false': 0
     'true': 50
 
+  potency_runes:
+    # EXPERIMENTAL: If enabled, archipelago will drop fundamental runestones in the encounter loot instead of automatically giving item bonuses.
+    'false': 50
+    'true': 0
+
   campaign:
     # Select which campaign(s) you want to play.
     # If you include DLC, you must own that dlc or the campaign will not generate.

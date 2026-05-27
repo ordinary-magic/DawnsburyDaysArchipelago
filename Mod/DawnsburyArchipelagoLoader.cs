@@ -8,6 +8,8 @@ using Dawnsbury.Campaign.Path;
 using Dawnsbury.Core;
 using Dawnsbury.Core.Creatures;
 using Dawnsbury.Core.Mechanics;
+using Dawnsbury.Core.Mechanics.Treasure;
+using Dawnsbury.Display.Notifications;
 using Dawnsbury.Modding;
 using Dawnsbury.Phases.Menus;
 using HarmonyLib;
@@ -41,15 +43,40 @@ public class DawnsburyArchipelagoLoader
 
         // Initialize the per-creature effects required by the mod
         ModManager.RegisterActionOnEachCreature(OnCreatureLoad);
+        ModManager.RegisterActionOnEachItem(Loot.AddApItemModifications);
 
-        // Apply the harmony patch to add the archipelago button to the main menu
+        // Register the drawing modifications used by the mod
+        //ModManager.Frontend.RegisterAtEndOfDrawFrame(ApMessages.DrawToasts);
+        ModManager.Frontend.RegisterAtEndOfDrawInPhase<MainMenuPhase>(ArchipelagoSetupMenu.DrawArchipelagoButton);
+
+        LoadHarmony();
+    }
+
+    /**
+     *  Initialize all the harmony patches used by the mod
+     */
+    public static void LoadHarmony()
+    {
+        // Create the harmony instance
         Harmony harmony = new("Dawnsbury.Mods.ArchipelagoRandomizer");
-        var dd_menu_draw = typeof(MainMenuPhase).GetMethod("Draw", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        harmony.Patch(dd_menu_draw, postfix: new HarmonyMethod(ArchipelagoSetupMenu.DrawArchipelagoButton));
 
         // Patch GameLoop.SpawnHero to allow us to change the spawn level
         var dd_spawnhero_tosheet = FindInternalMethod(typeof(GameLoop), "SpawnInitials", "SpawnHero");
         harmony.Patch(dd_spawnhero_tosheet, transpiler: new HarmonyMethod(SpawnHeroTranspiler));
+
+        // Patch CampaignMenuPhase.CreateViews in order to check for loot drops whenever we load the campaign menu
+        var dd_campaign_menu_create = typeof(CampaignMenuPhase).GetMethod("CreateViews", BindingFlags.NonPublic | BindingFlags.Instance);
+        harmony.Patch(dd_campaign_menu_create, postfix: new HarmonyMethod(OnCampaignMenuLoad));
+        
+        // Patch Armor/WeaponProperties.ItemBous in order to fake the bonus amount in menus to allow us to attach runes
+        var dd_armor_item_bonus = typeof(ArmorProperties).GetProperty("ItemBonus", BindingFlags.Public | BindingFlags.Instance | BindingFlags.GetProperty);
+        var dd_weapon_item_bonus = typeof(WeaponProperties).GetProperty("ItemBonus", BindingFlags.Public | BindingFlags.Instance | BindingFlags.GetProperty);
+        harmony.Patch(dd_armor_item_bonus?.GetGetMethod(), postfix: new HarmonyMethod(Loot.ItemBonusPostfix));
+        harmony.Patch(dd_weapon_item_bonus?.GetGetMethod(), postfix: new HarmonyMethod(Loot.ItemBonusPostfix));
+
+        // Patch Toasts.Draw to make it also call our toast method.
+        var dd_toasts_draw = typeof(Toasts).GetMethod(nameof(Toasts.Draw), BindingFlags.Public | BindingFlags.Static);
+        harmony.Patch(dd_toasts_draw, postfix: new HarmonyMethod(ApMessages.DrawToasts));
     }
 
     /**
@@ -191,35 +218,38 @@ public class DawnsburyArchipelagoLoader
     /**
      * Check to make sure we are in an active archipelago campaign (to not affect other gameplay)
      */
-    public static bool IsArchipelagoCampaignActive()
+    public static bool IsArchipelagoCampaignActive(bool allowMock = true)
     {
         // Check if the archipelago campaign exists (is connected) and if we are currently in it
-        return ArchipelagoClient.MockArchipelago ||
+        return (ArchipelagoClient.MockArchipelago && allowMock) ||
             (ArchipelagoCampaign != null && CampaignState.Instance?.AdventurePath == ArchipelagoCampaign);
     }
 
     /**
      * Method to setup the archipelago connection qEffects on each pc at the start of each encounter.
      */
-    public static void OnCreatureLoad(Creature pc)
+    public static void OnCreatureLoad(Creature creature)
     {
         // Only proceed if this creature is a pc and we are connected to archipelago
-        if (IsArchipelagoCampaignActive() && pc.PersistentCharacterSheet != null)
+        if (IsArchipelagoCampaignActive() && creature.PersistentCharacterSheet != null)
         {
             // Add the qeffect to automatically adjusts stats as we progress
-            pc.AddQEffect(CharacterStatus.GetProgressAdjustmentQEffect());
+            creature.AddQEffect(CharacterStatus.GetProgressAdjustmentQEffect());
 
             // Setup the Battle Result QEffect
-            pc.AddQEffect(GetEndOfBattleQEffect());
+            creature.AddQEffect(GetEndOfBattleQEffect());
 
             // Setup the automatic tpk event
-            pc.AddQEffect(GetDeatlinkCheckingQEffect());
+            creature.AddQEffect(GetDeatlinkCheckingQEffect());
+        }
 
+        // Do the following on every characer when we are connected, regardless of if they are a pc
+        if (IsArchipelagoCampaignActive())
+        {
             // Setup the Archipelago message queue.
-            pc.AddQEffect(GetApLoggerQEffect());
+            creature.AddQEffect(GetApLoggerQEffect());
         }
     }
-    
         
     /**
      * Create a QEffect which will handle monitoring for/issuing TPK's for Archipelago's Deathlink
@@ -266,6 +296,10 @@ public class DawnsburyArchipelagoLoader
                     else
                         result = ArchipelagoClient.Instance?.SendDeathlink(qfSelf.Owner.Battle.VictoryReason);
                 }
+
+                // Try to catch up on any pending loot drops as we return to the campaign menu
+                Loot.TryToAwardPendingLoot();
+
                 return result ?? Task.CompletedTask;
             }
         };
@@ -279,14 +313,22 @@ public class DawnsburyArchipelagoLoader
         return new QEffect()
         {
             StartOfYourEveryTurn = (qfSelf, owner) =>
-            {
-                return Task.Run(() =>
-                {
-                    // Empty all messages into the combat log
-                    while (ArchipelagoClient.MessageQueue.TryDequeue(out string? message))
-                        owner.Battle.Log(message, null, null, null, Microsoft.Xna.Framework.Color.Magenta);
-                });
-            }
+                Task.Run(() => ApMessages.UpdateBattleChat(owner.Battle))
         };
+    }
+
+    // Flag to indicate if we are currently in the Ap campaign's menu
+    public static bool InApCampaignMenu {get; set;} = false;
+
+    /**
+     * Method to run every time the campaign menu is loaded.
+     */
+    public static void OnCampaignMenuLoad()
+    {
+        if (IsArchipelagoCampaignActive(false))
+        {
+            InApCampaignMenu = true;
+            Loot.TryToAwardPendingLoot();
+        }
     }
 }

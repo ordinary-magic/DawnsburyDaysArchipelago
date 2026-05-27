@@ -4,10 +4,8 @@ using System.Linq;
 using Dawnsbury.Campaign.Path;
 using Dawnsbury.Campaign.Path.CampaignStops;
 using Dawnsbury.Campaign.Encounters;
-using System.Data;
 using Dawnsbury.Core.Mechanics.Treasure;
-using Dawnsbury.Core.Mechanics.Enumerations;
-using Dawnsbury.Core.Mechanics.Rules;
+using Dawnsbury.Display.Illustrations;
 
 namespace DawnsburyArchipelago;
 
@@ -22,10 +20,11 @@ public class ArchipelagoPathRandomizer(AdventurePath[] paths, ArchipelagoClient 
     /// Overwritable the base class metadata properties ///
     protected override string Id => "Archipelago";
     protected override string Name => " Archipelago";
-    protected override string Description => $"{inputName}, but the encounter order, enemies, and loot are all randomly determined.";
+    protected override string Description => $"{inputName}, but the encounter order is random, and you gain level-ups and upgrades as your archipelago progresses!";
     protected override int StartLevel => endLevel; // start at the final level (for builds), and then level down the pcs in encounters
     protected override int StartingShopLevel => 1; // Dont let player buy high level items (TODO: placeholder for filtering shop inventory)
-
+    protected override Illustration Icon => new ModdedIllustration("archipelago_logo.png");
+    protected override Func<Item, bool> CustomShopFilter => (item) => Loot.ShouldBeIncludedInArchipelagoShop(item, archipelago);
 
     /**
      * Create a new adventure path that shuffles the order of the input adventure path encounters. 
@@ -103,12 +102,9 @@ public class ArchipelagoPathRandomizer(AdventurePath[] paths, ArchipelagoClient 
      */
     protected override IEnumerable<Item> FilterLoot(IEnumerable<Item> loot)
     {
-        // Todo: make this more sophisticated about stripping runes/magic items/etc
-        return loot
-            .Where(item => !item.Traits.Contains(Trait.Weapon))
-            .Where(item => !item.Traits.Contains(Trait.Armor))
-            .Where(item => !item.Traits.Contains(Trait.Fundamental)); // Exclude all fundamental runes
-            //.Select(item => item.DuplicateWithoutRunes());
+        if (archipelago.RandomizeEncounterLoot)
+            return Loot.FilterLoot(loot).Select(item => Loot.RandomizeItem(item, Rng));
+        return Loot.FilterLoot(loot);
     }
 
     /**
@@ -119,6 +115,9 @@ public class ArchipelagoPathRandomizer(AdventurePath[] paths, ArchipelagoClient 
     {
         return () =>
         {
+            // Update the state tracker, as having loaded an encounter, we are no longer in a menu
+            DawnsburyArchipelagoLoader.InApCampaignMenu = false;
+
             // Override the default level (always at max level, and then selectivley leveled down later)
             encounter.CharacterLevel = endLevel;
 
@@ -138,6 +137,7 @@ public class ArchipelagoPathRandomizer(AdventurePath[] paths, ArchipelagoClient 
                 encounter.Rewards.AddRange(loot);
             }
 
+            // Return the modified encounter
             return encounter;
         };
     }

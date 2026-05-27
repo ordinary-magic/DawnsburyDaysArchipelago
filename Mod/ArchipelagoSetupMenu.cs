@@ -4,7 +4,9 @@ using Dawnsbury.Display;
 using Dawnsbury.Display.Controls;
 using Dawnsbury.Display.Illustrations;
 using Dawnsbury.Display.Text;
+using Dawnsbury.Phases.Menus;
 using Dawnsbury.Phases.Popups;
+using Dawnsbury.ThirdParty.SteamApi;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -55,7 +57,7 @@ public class ArchipelagoSetupMenu : WindowPhase
 
         // Title
         Rectangle titleRect = new(windowRect.X + padding, currentY, paddedWidth, rowHeight);
-        Writer.DrawString("{b}Archipelago Multiplayer Connection{/b}", titleRect, null,
+        Writer.DrawString("{b}Archipelago Connection{/b}", titleRect, null,
                         BitmapFontGroup.Mia48Font, Writer.TextAlignment.Middle);
         currentY += rowHeight + padding;
 
@@ -241,9 +243,15 @@ public class ArchipelagoSetupMenu : WindowPhase
     /*
      * Static method to create the "Archipelago" button on the main menu to be patched in via harmony.
      */
-    public static void DrawArchipelagoButton()
+    public static void DrawArchipelagoButton(MainMenuPhase _)
     {
-        UI.DrawUIButton(new Rectangle(Root.ScreenWidth - 500, Root.ScreenHeight - 600, 400, 90), delegate (Rectangle r)
+        // Determine the height of the button releative to how many other buttons are on the sreen
+        var y = Root.ScreenHeight - 200;
+        if (Steam.IsSteamBinary) y -= 200;
+        if (!Steam.IsSteamRunningOnSteamDeck()) y -= 200;
+
+        // Make the custom button
+        UI.DrawUIButton(new Rectangle(Root.ScreenWidth - 500, y, 400, 90), delegate (Rectangle r)
         {
             Primitives.DrawImage(new ModdedIllustration("archipelago_logo.png"), new Rectangle(r.X + 10 + 20, r.Y + 20, r.Height - 40, r.Height - 40), null, scale: true);
             Rectangle rectangle = new(r.X + r.Height + 30, r.Y, r.Width - r.Height - 30, r.Height);
@@ -253,6 +261,6 @@ public class ArchipelagoSetupMenu : WindowPhase
         {
             Sfxs.Play(SfxName.Button);
             Root.PushPhase(new ArchipelagoSetupMenu());
-        }, enabled: true, menuTooltip: "Configure the Archipelago Randomizer Settings");
+        }, enabled: true, "Configure the Archipelago Randomizer Settings");
     }
 }
