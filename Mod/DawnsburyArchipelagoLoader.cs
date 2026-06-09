@@ -46,8 +46,8 @@ public class DawnsburyArchipelagoLoader
         ModManager.RegisterActionOnEachItem(Loot.AddApItemModifications);
 
         // Register the drawing modifications used by the mod
-        //ModManager.Frontend.RegisterAtEndOfDrawFrame(ApMessages.DrawToasts);
-        ModManager.Frontend.RegisterAtEndOfDrawInPhase<MainMenuPhase>(ArchipelagoSetupMenu.DrawArchipelagoButton);
+        //ModManager.Frontend.RegisterAtEndOfDrawFrame(ApMessages.DrawToasts); // doesnt work, since we dont get frame time
+        ArchipelagoSetupMenu.RegisterArchipelagoButtonInModManager();
         Loot.ReplaceRunestoneRuleTextGenerator();
 
         LoadHarmony();

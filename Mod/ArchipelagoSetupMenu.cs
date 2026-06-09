@@ -4,6 +4,8 @@ using Dawnsbury.Display;
 using Dawnsbury.Display.Controls;
 using Dawnsbury.Display.Illustrations;
 using Dawnsbury.Display.Text;
+using Dawnsbury.IO;
+using Dawnsbury.Modding;
 using Dawnsbury.Phases.Menus;
 using Dawnsbury.Phases.Popups;
 using Dawnsbury.ThirdParty.SteamApi;
@@ -32,7 +34,7 @@ public class ArchipelagoSetupMenu : WindowPhase
     public ArchipelagoSetupMenu()
         : base(new Rectangle(Root.ScreenWidth / 2 - 450, Root.ScreenHeight / 2 - 240, 900, 480))
     {
-        InitializeMenuFromCache();
+        InitializeMenuFromCache(serverTextbox, portTextbox, slotTextbox, passwordTextbox);
     }
 
     /*
@@ -148,13 +150,10 @@ public class ArchipelagoSetupMenu : WindowPhase
         return ArchipelagoClient.InstanceReady ? Color.DarkBlue : Color.DarkRed;
     }
 
-    // File path in game's config directory
-    private static string ConnectionInfoPath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "DawnsburyDays",
-        "archipelago_connection.cfg");
+    // Path to the cache file, in %Appdata%/Dawnsbury
+    private static string ConnectionCacheFilePath =>
+        Path.Combine(LocalDataStore.StorageFolder, "archipelago_connection.cfg");
 
-    
     /*
      * Save successfull connection info into a cache for future use
      */
@@ -163,12 +162,12 @@ public class ArchipelagoSetupMenu : WindowPhase
         try
         {
             // Create directory if needed
-            var dir = Path.GetDirectoryName(ConnectionInfoPath);
+            var dir = Path.GetDirectoryName(ConnectionCacheFilePath);
             if (!Directory.Exists(dir) && dir != null) // != null is not needed, but it fixes a warning
                 Directory.CreateDirectory(dir);
 
             // Write connection info
-            File.WriteAllLines(ConnectionInfoPath, [
+            File.WriteAllLines(ConnectionCacheFilePath, [
                 $"server={connection.Server}",
                 $"port={connection.Port}",
                 $"slot={connection.Slot}",
@@ -183,10 +182,10 @@ public class ArchipelagoSetupMenu : WindowPhase
      */
     private static Dictionary<string, string> TryToReadCacheFile()
     {
-        if (File.Exists(ConnectionInfoPath))
+        if (File.Exists(ConnectionCacheFilePath))
             try
             {
-                var lines = File.ReadAllLines(ConnectionInfoPath);
+                var lines = File.ReadAllLines(ConnectionCacheFilePath);
                 var dict = lines
                     .Where(line => line.Contains('='))
                     .Select(line => line.Split('=', 2))
@@ -216,21 +215,20 @@ public class ArchipelagoSetupMenu : WindowPhase
         }
     }
 
-    private void InitializeMenuFromCache()
+    private static void InitializeMenuFromCache(Textbox server, Textbox port, Textbox slot, Textbox password)
     {
         // Try to pre-load cached connection info as a convenience
         var cache = TryToReadCacheFile();
 
-        // Because GetValueSafe returns the type's default value on a cache miss,
-        //   it should be overwritten by the placeholder value we defined with the textbox
-        serverTextbox.Text = cache.GetValueSafe("server");
-        portTextbox.Text = cache.GetValueSafe("port");
-        slotTextbox.Text = cache.GetValueSafe("slot");
-        passwordTextbox.Text = cache.GetValueSafe("password");
+        // Must explicitly set "" on cache miss, as setting text to null will throw an exception
+        server.Text = cache.GetValueSafe("server") ?? "";
+        port.Text = cache.GetValueSafe("port") ?? "";
+        slot.Text = cache.GetValueSafe("slot") ?? "";
+        password.Text = cache.GetValueSafe("password") ?? "";
     }
 
     /*
-     * Static method to create the "Archipelago" button on the main menu to be patched in via harmony.
+     * Try to connect to archipelago with our cached connection info.
      */
     public static bool TryConnectingToArchipelagoUsingCache()
     {
@@ -241,26 +239,34 @@ public class ArchipelagoSetupMenu : WindowPhase
     }
 
     /*
-     * Static method to create the "Archipelago" button on the main menu to be patched in via harmony.
+     * Static method to draw the "Archipelago" button on the main menu.
      */
-    public static void DrawArchipelagoButton(MainMenuPhase _)
+    public static void DrawArchipelagoButton(Rectangle at)
     {
-        // Determine the height of the button releative to how many other buttons are on the sreen
-        var y = Root.ScreenHeight - 200;
-        if (Steam.IsSteamBinary) y -= 200;
-        if (!Steam.IsSteamRunningOnSteamDeck()) y -= 200;
+        Rectangle logoRect = new(at.X + 10 + 20, at.Y + 20, at.Height - 40, at.Height - 40);
+        Primitives.DrawImage(new ModdedIllustration("archipelago_logo.png"), logoRect, null, scale: true);
 
-        // Make the custom button
-        UI.DrawUIButton(new Rectangle(Root.ScreenWidth - 500, y, 400, 90), delegate (Rectangle r)
-        {
-            Primitives.DrawImage(new ModdedIllustration("archipelago_logo.png"), new Rectangle(r.X + 10 + 20, r.Y + 20, r.Height - 40, r.Height - 40), null, scale: true);
-            Rectangle rectangle = new(r.X + r.Height + 30, r.Y, r.Width - r.Height - 30, r.Height);
-            BitmapFontGroup mia48Font = BitmapFontGroup.Mia48Font;
-            Writer.DrawString("Archipelago", rectangle, ConnectionStatusColor(), mia48Font, Writer.TextAlignment.Left);
-        }, delegate
-        {
-            Sfxs.Play(SfxName.Button);
-            Root.PushPhase(new ArchipelagoSetupMenu());
-        }, enabled: true, "Configure the Archipelago Randomizer Settings");
+        Rectangle textRect = new(at.X + at.Height + 30, at.Y, at.Width - at.Height - 30, at.Height);
+        Writer.DrawString("Archipelago", textRect, ConnectionStatusColor(), BitmapFontGroup.Mia48Font, Writer.TextAlignment.Left);
     }
+
+    /*
+     * Method to call when the main menu "archipelago" button is clicked.
+     */
+    public static void DoArchipelagoButtonAction()
+    {
+        Sfxs.Play(SfxName.Button);
+        Root.PushPhase(new ArchipelagoSetupMenu());
+    }
+
+    // Tooltip for the main menu button
+    public static string ARCHIPELAGO_BUTTON_TOOLTIP
+        => "Configure the Archipelago Randomizer Settings";
+
+    /*
+     * Static method to setup the archipelago button with the mod manager
+     */
+    public static void RegisterArchipelagoButtonInModManager() 
+        => ModManager.Frontend.RegisterMainMenuRightSideButton(
+            DrawArchipelagoButton, DoArchipelagoButtonAction, ARCHIPELAGO_BUTTON_TOOLTIP);
 }
