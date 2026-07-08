@@ -21,6 +21,11 @@
     </PropertyGroup>
     <ItemGroup>
         <Reference Include="$(DawnsburryPath)/Data/Dawnsbury Days.dll" />
+        <!--- References to the dlc, in order to check the path structure for the refelctive hooks -->
+        <!--
+        <Reference Include="$(DawnsburryPath)/Data/Dawnsbury.TheProfaneBarrier.dll" />
+        <Reference Include="$(DawnsburryPath)/Data/Dawnsbury.GoodLittleChildrenNeverGrowUp.dll" />
+        -->
         <Reference Include="$(DawnsburryPath)/Data/Common.dll" />
         <Reference Include="$(DawnsburryPath)/Data/MonoGame.Framework.dll" />
     </ItemGroup>

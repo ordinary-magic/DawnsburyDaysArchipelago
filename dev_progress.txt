@@ -60,28 +60,96 @@ v1.3 The Runestone, Shield, and Notifications Update:
  x Find way to close archipelago connection automatically when game is closed?
  - Bug: Sometimes on first load, items show runes as "inactive" in equipment screen (wont fix)
 
-v1.4 Further Campaigns:
- - Random character builds (using game defaults for now).
- - Play the newest campaign casually.
- - Add Good little children
- - Add Four leaf clover
+v1.4 More Random Stuff:
+ x 1.3.2 bugfixes:
+   w Rework property runes to use fixed ingorelimit trait (did not work, keep current implementation)
+   x Fix possible crashes on connection
+     x Unparsable server address
+     x Use placeholder connection values if nothing is entered
+     x Server client mismatch (v1.1 world & new mod)
+ x Strike/Spell actions must be unlocked.
+   x Write generator rule to ensure we get stride + interact on someone early.
+   x automatically give someone "interact" at the start?
+ x Option to Include Random Encounters in pool. (RandomEnounterModePhase.cs as reference)
+   x Can pad archipelago size by adding more of these
+   x Need to allow players to select a maximum difficulty (extreme+++ encounters which expect custom builds should be opt-in only)
+   x Check that random encounter filtering options are working
+   x Test that it respects modded content
+ x Add setting and means to randomize loot (use Items.ShopItems)
+   x Restrictions to Within Category, Within Item Level, Both, or Neither (Chaos)
+   x Ensure it works, and respects modded item rule
+ x Make the item pool automatically grow/shrink to the options.
+   x Determine Filler Items
+     x Make Loot Bag Contents
+     x Figure out how to ban modded items, or update documentation if i cannot
+   x Trap items
+   X Make double up drops for when we have too many items.
+   x Test Bonus Encounter Management, with and without padding.
+ x Improve progression balancing - make level gated regions in archipelago?
+ x Made Item Bonuses apply more immediatley.
+ x Merge & test 1.3.2
+   x Integrate IgnoreItemPropertyLimit trait
+   x Ap connection fixes merged
+ x Refactor item filter logic so there's less repeated code
+ x Add Good Little Children (why not)
+ x Fix "Final Encounter" credits.
+ x Test if always on bonuses make runes work. (Does not)
+ x Improve the Setup Menu:
+   x Fix overlapping status text
+   x Add keyboard shortcuts for buttons
+ x Update Readme
+   x Explain Progression balancing
+   x Explain padding / filler rules
+   w Document Notable Settings (its in the yaml)
+   x Review formatting and spelling somewhere.
+ x Implementation Bugs:
+   x Non-Shuffle w Extra did not add the Extra
+   x We dont have enough padding encounters if every single option is turned on in DD, make sure this is handled
+   x Loot shuffle seems suspicious?
+   x The final encounter is no longer the final encounter
+   x Modded items still showing up in store, despite mod tag filter
+   w Make shield scaling apply to other shields - (wontfix) we replace shields, not modify hardness. basically impossible for mod shields.
+   x Loot Bag not awarded (possibly fixed)
+   x Did not add double up bonus check at any point
+   x Final dusk was in module 2 with shulffle as 1 lvl max - level up stop happened b4 dawnsbury stop - should be fixed now
+   x Figure out how to handle end of module checks more robustly than "narration" - level ups or very last encounter?
+   w Final encounter can get double ups (wontfix)
+   x Did not give skill bonuses as filler, possibly fixed?
+   x Should not restrict +1 etc. items in runs without item bonus scaling.
+   x Suspect level 4 (ilvl 7) scroll drop in dd (i think they just give high ilvl stuff sometimes)
+   x Replacement weapon pool is not deep, add special case handling so we dont always get staff of healing
+   x Having too many encounters front loads the bonus pool - nice, but out of logic
+   x Archipelago splits bonuses modularly among regions, instead of in order.
+   x "Final" encounter was actually not last (because of two cutscene encounters)
+ x Tests
+   x Run full runthru of super (merged + everything) campaign - once i have a wall outlet.
+   x Test no padding run with lots of stuff.
+   x Todo: check type match rando with upcast scrolls (should be some heal+ in long campaign, use keep both item rando setting)
+   x Todo: re-test loot bags after legal item Rewrite
+   x Todo: re-test we respect banned runes in a no-rando run
+   x Test Backwards Compatibility (w internet to dl old apworlds)
+   x Test: state check item bonuses & trained skill restriction
+   x Test: check loot bag again
+   x Test: Type Match Scroll generation w (x) and without level match
+ x Remove Debug Auto-Win
 
-v1.5 More Random Stuff: (possibly first depending on when four leaf clover is released)
- - Community built random builds.
- - Option to Include Random Encounters in pool over campaign encounters of same level?
- - Add setting and means to randomize loot within categories (ie random lvl 1 spell instead of heal, random property runestones)
+v1.5 Further Campaigns:
+ - Play the newest campaign casually.
+ - Add Four leaf clover
+ - Add greater striking rune bonuses (watch Automatic Bonus Progression)
+ - Test if ABP weapon striking qeffect that affects weapon properties can scale down too.
 
 Ideas for future versions:
- - Add option to apply level ups more evenly (all at once?).
+ x Add option to apply level ups more evenly (all at once?). - progression balancing does this.
  - Roguelike Integration? (let it handle its own encounter order and loot, but can do level scaling - ask dev for collab)
  - Add common reference file to synchronize location/item ids between apworld and mod
- - Add More Locations and Rewards
+ - Add EVEN MORE Locations and Rewards
    - Need to be granular so as to avoid awarding 10 checks on level clear
    - Achievements are a good source of potential checks, but need to be filtered
-   - End of Battle Loot is super customizable, and would add more variety to reward quality
- - Investigate per enemy rewards
- - Investigate locking basic actions (cast/strike) behind drops.
+   - Investigate per enemy rewards
+ - Forced character builds?
+   - Use pool of builds sourced from community, respecting installed mods.
 
 Random Small Bugs:
- - Archipealgo button on-hover tooltip is missing (is in code, idk why it doesnt work - probably requires more extensive patching)
+ x Archipealgo button on-hover tooltip is missing - fixed w button hook
  - Spell prep menu is the incorrect level because arhcipelago treats chars as max level outside of encounters.

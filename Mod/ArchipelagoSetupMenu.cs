@@ -8,10 +8,11 @@ using Dawnsbury.IO;
 using Dawnsbury.Modding;
 using Dawnsbury.Phases.Menus;
 using Dawnsbury.Phases.Popups;
-using Dawnsbury.ThirdParty.SteamApi;
+using DawnsburyArchipelago.Data;
 using HarmonyLib;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -29,10 +30,12 @@ public class ArchipelagoSetupMenu : WindowPhase
     private readonly Textbox portTextbox = new() { PlaceholderText = "38281" };
     private readonly Textbox slotTextbox = new() { PlaceholderText = "Annacoesta" };
     private readonly Textbox passwordTextbox = new() { PlaceholderText = "" };
-    private string status = ArchipelagoClient.InstanceReady ? "Connected!" : "Not Connected";
+    private static string Status => ArchipelagoClient.InstanceReady? "Connected!" : "Not Connected";
+    private string error = "";
+    private bool isMouseInRectangle = false;
 
     public ArchipelagoSetupMenu()
-        : base(new Rectangle(Root.ScreenWidth / 2 - 450, Root.ScreenHeight / 2 - 240, 900, 480))
+        : base(new Rectangle(Root.ScreenWidth / 2 - 450, Root.ScreenHeight / 2 - 255, 900, 510))
     {
         InitializeMenuFromCache(serverTextbox, portTextbox, slotTextbox, passwordTextbox);
     }
@@ -45,62 +48,97 @@ public class ArchipelagoSetupMenu : WindowPhase
         base.Draw(sb, game, elapsedSeconds);
 
         // Window dimensions
-        Rectangle windowRect = Window;
         int padding = 20;
         int labelWidth = 250;
         int rowHeight = 50;
         int buttonHeight = 60;
         int buttonWidth = 200;
 
+        // Check if the mouse is inside the window
+        isMouseInRectangle = Root.IsMouseOver(Window);
+
         // Calculate positions
-        int currentY = windowRect.Y + padding;
-        int paddedWidth = windowRect.Width - (2 * padding);
+        int currentY = Window.Y + padding;
+        int paddedWidth = Window.Width - (2 * padding);
         int textBoxWidth = paddedWidth - labelWidth - padding;
 
         // Title
-        Rectangle titleRect = new(windowRect.X + padding, currentY, paddedWidth, rowHeight);
+        Rectangle titleRect = new(Window.X + padding, currentY, paddedWidth, rowHeight);
         Writer.DrawString("{b}Archipelago Connection{/b}", titleRect, null,
                         BitmapFontGroup.Mia48Font, Writer.TextAlignment.Middle);
         currentY += rowHeight + padding;
 
         // Server field
-        Writer.DrawString("Server Address:", new Rectangle(windowRect.X + padding, currentY, labelWidth, rowHeight),
+        Writer.DrawString("Server Address:", new Rectangle(Window.X + padding, currentY, labelWidth, rowHeight),
                         Color.Black, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Left);
-        serverTextbox.Draw(new Rectangle(windowRect.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
+        serverTextbox.Draw(new Rectangle(Window.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
         currentY += rowHeight + padding;
 
         // Port field
-        Writer.DrawString("Port:", new Rectangle(windowRect.X + padding, currentY, labelWidth, rowHeight),
+        Writer.DrawString("Port:", new Rectangle(Window.X + padding, currentY, labelWidth, rowHeight),
                         Color.Black, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Left);
-        portTextbox.Draw(new Rectangle(windowRect.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
+        portTextbox.Draw(new Rectangle(Window.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
         currentY += rowHeight + padding;
 
         // Slot name field
-        Writer.DrawString("Slot Name:", new Rectangle(windowRect.X + padding, currentY, labelWidth, rowHeight),
+        Writer.DrawString("Slot Name:", new Rectangle(Window.X + padding, currentY, labelWidth, rowHeight),
                         Color.Black, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Left);
-        slotTextbox.Draw(new Rectangle(windowRect.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
+        slotTextbox.Draw(new Rectangle(Window.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
         currentY += rowHeight + padding;
 
         // Password field
-        Writer.DrawString("Password:", new Rectangle(windowRect.X + padding, currentY, labelWidth, rowHeight),
+        Writer.DrawString("Password:", new Rectangle(Window.X + padding, currentY, labelWidth, rowHeight),
                         Color.Black, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Left);
-        passwordTextbox.Draw(new Rectangle(windowRect.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
-        currentY += rowHeight + (2 * padding);
+        passwordTextbox.Draw(new Rectangle(Window.X + padding + labelWidth, currentY, textBoxWidth, rowHeight));
+        currentY += rowHeight + padding;
 
-        // Control Buttons & Status
-        UI.DrawUIButton(new Rectangle(windowRect.X + padding, currentY, buttonWidth, buttonHeight), "Connect",
+        // Error Status Display
+        Rectangle errorRect = new(Window.X + padding, currentY, Window.Width - (2 * padding), rowHeight);
+        Writer.DrawString(error, errorRect, Color.DarkRed, BitmapFontGroup.Mia32Font, Writer.TextAlignment.Middle);
+        currentY += rowHeight;
+
+        // Connect Button - Todo: Capture Enter Button
+        UI.DrawUIButton(new Rectangle(Window.X + padding, currentY, buttonWidth, buttonHeight), "Connect",
             ConnectButton, Writer.TextAlignment.Middle);
 
-        var statusLeftAnchor = windowRect.X + (windowRect.Width / 2) - (textBoxWidth / 2);
+        // Status Display - Conneted/Disconnected
+        var statusLeftAnchor = Window.X + (Window.Width / 2) - (textBoxWidth / 2);
         Rectangle statusRect = new(statusLeftAnchor, currentY, textBoxWidth, buttonHeight);
-        Writer.DrawString(status, statusRect, ConnectionStatusColor(), BitmapFontGroup.Mia32Font, Writer.TextAlignment.Middle);
+        Writer.DrawString(Status, statusRect, ConnectionStatusColor(), BitmapFontGroup.Mia32Font, Writer.TextAlignment.Middle);
 
-        UI.DrawUIButton(new Rectangle(windowRect.X + windowRect.Width - padding - buttonWidth, currentY, buttonWidth, buttonHeight),
-            "Close", delegate
-            {
-                Sfxs.Play(SfxName.Button);
-                Root.PopFromPhase();
-            }, Writer.TextAlignment.Middle);
+        // Close Button - Todo: Capture ESC or clicks outside the window also?
+        UI.DrawUIButton(new Rectangle(Window.X + Window.Width - padding - buttonWidth, currentY, buttonWidth, buttonHeight),
+            "Close", CloseButton, Writer.TextAlignment.Middle);
+    }
+
+    /*
+     * The component's update method, called every frame. We use it to handle misc inputs.
+     */
+    protected override void Update(Game game, float elapsedSeconds)
+    {
+        // Update the other components too
+        base.Update(game, elapsedSeconds);
+
+        // If Escape key is pressed, close this window
+        if (Root.WasKeyPressed(Keys.Escape))
+            CloseButton();
+
+        // If the user clicks out of the window, close it
+        else if (Root.WasMouseLeftClick && !isMouseInRectangle)
+            CloseButton();
+
+        // If enter is pressed, connect.
+        else if (Root.WasKeyPressed(Keys.Enter))
+            ConnectButton();
+    }
+
+    /*
+     * Event handler for the "Close" button, which closes the menu.
+     */
+    private void CloseButton()
+    {
+        Sfxs.Play(SfxName.Button);
+        Root.PopFromPhase();
     }
 
     /*
@@ -108,22 +146,33 @@ public class ArchipelagoSetupMenu : WindowPhase
      */
     private void ConnectButton()
     {
+        // Play the button sfx
+        Sfxs.Play(SfxName.Button);
+
+        // Pull values from the textboxes, falling back to placeholder values if the input is empty and it has one
+        var serverText = (serverTextbox.Text == "")? serverTextbox.PlaceholderText ?? "" : serverTextbox.Text;
+        var portText = (portTextbox.Text == "")? portTextbox.PlaceholderText ?? "" : portTextbox.Text;
+        var slotText = (slotTextbox.Text == "")? slotTextbox.PlaceholderText ?? "" : slotTextbox.Text;
+
         // Check the port number
         int port = 0;
         try
         {
-            port = int.Parse(portTextbox.Text);
+            port = int.Parse(portText);
         }
         catch (Exception) { }
 
         if (port <= 0 || port > 65535)
-            status = $"Invalid Port: '{portTextbox.Text}'";
+            error = $"Invalid Port: '{portTextbox.Text}'";
         else
-            status = ConnectToArchipelago(new(serverTextbox.Text, port, slotTextbox.Text, passwordTextbox.Text));
+            error = ConnectToArchipelago(new(serverText, port, slotText, passwordTextbox.Text));
 
-        // Activate the Archipelago adventure on a successfull connection
+        // Activate the Archipelago adventure on a successful connection
         if (ArchipelagoClient.Instance != null)
+        {
             DawnsburyArchipelagoLoader.SwapToArchipelagoRandomizedPath();
+            CloseButton(); // Finally, close the connection window.
+        }
     }
 
     /*
@@ -131,14 +180,23 @@ public class ArchipelagoSetupMenu : WindowPhase
      */
     private static string ConnectToArchipelago(ApConnectionInfo connection)
     {
-        ArchipelagoClient ap = new(connection);
-
-        string? error = ap.ConnectArchipelago();
-        if (error != null)
-            return error;
+        try
+        {
+            // Try connecting to the archipelago
+            ArchipelagoClient ap = new(connection);
+            string? error = ap.ConnectArchipelago();
+            if (error != null)
+                return error;
+        }
+        catch (Exception e)
+        {
+            // Catch thrown errors (should only be parse expeptions in the constructor)
+            ApMessages.LogError(e.Message);
+            return e.Message;
+        }
 
         SaveConnectionInfo(connection);
-        return "Connected";
+        return "";
     }
 
     /*

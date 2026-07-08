@@ -1,0 +1,219 @@
+﻿# Q. What is this file?
+# A. This file contains options which allow you to configure your multiworld experience while allowing
+#    others to play how they want as well.
+#
+# Q. How do I use it?
+# A. The options in this file are weighted. This means the higher number you assign to a value, the
+#    more chances you have for that option to be chosen. For example, an option like this:
+#
+#    map_shuffle:
+#      on: 5
+#      off: 15
+#
+#    Means you have 5 chances for map shuffle to occur, and 15 chances for map shuffle to be turned
+#    off.
+#
+# Q. I've never seen a file like this before. What characters am I allowed to use?
+# A. This is a .yaml file. You are allowed to use most characters.
+#    To test if your yaml is valid or not, you can use this website:
+#        http://www.yamllint.com/
+#    You can also verify that your Archipelago options are valid at this site:
+#        https://archipelago.gg/check
+
+# Your name in-game, limited to 16 characters.
+#     {player} will be replaced with the player's slot number.
+#     {PLAYER} will be replaced with the player's slot number, if that slot number is greater than 1.
+#     {number} will be replaced with the counter value of the name.
+#     {NUMBER} will be replaced with the counter value of the name, if the counter value is greater than 1.
+name: Player{number}
+
+# Used to describe your yaml. Useful if you have multiple files.
+description: Default Dawnsbury Days Template
+
+game: Dawnsbury Days
+requires:
+  version: 0.6.3 # Version of Archipelago required for this yaml to work as expected.
+
+Dawnsbury Days:
+  ################
+  # Game Options #
+  ################
+  progression_balancing:
+    # A system that can move progression earlier, to try and prevent the player from getting stuck and bored early.
+    # 
+    # A lower setting means more getting stuck. A higher setting means less getting stuck.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 99
+    random: 0
+    random-low: 0
+    random-high: 0
+    disabled: 0 # equivalent to 0
+    normal: 50 # equivalent to 50
+    extreme: 0 # equivalent to 99
+
+  accessibility:
+    # Set rules for reachability of your items/locations.
+    # 
+    # **Full:** ensure everything can be reached and acquired.
+    # 
+    # **Minimal:** ensure what is needed to reach your goal can be acquired.
+    full: 50
+    minimal: 0
+
+  encounter_shuffle:
+    # Should the order of encounters within the campaign be randomized?
+    'false': 0
+    'true': 50
+
+  shuffle_level:
+    # When shuffling encounters, how many levels above an encounter's level can its replacement be?
+    # eg, in "Dawnsbury Days", which goes from levels 1-4, if you set this to 3,
+    # you can encounter the final boss (a level 4 encounter) as the first mission.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 20
+    0: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  include_free_encounters:
+    # When encounters are shuffled, should we include the Free Encounters in the selection?
+    # If so, should we include them only as padding for unfilled item drops, as randomly selected replacements for campaign encounters, 
+    # add some randomly chosen extras at each level, or increase the campaign length to include every possible encounter?
+    # Notes: "Every Encounter" might cause us to run out of drops, causing some encounters to not reward anything,
+    #          and no padding might cause us to run out of encounters, causing drops to stack up at the end of a level module.
+    #          By default, neither of these should happen if you have either (but not both) of item bonuses or basic locked actions enabled.
+    none: 0
+    as_padding: 50
+    as_replacements: 0
+    some_extras: 0
+    every_encounter_possible: 0
+
+  include_extreme_encounters:
+    # If we include free encounters, should we include Extreme+ (or harder) ones?
+    # Caution: Extreme+ free encounters often assume you have custom built characters, and may be *very* hard.
+    'false': 50
+    'true': 0
+
+  extra_filler_amount:
+    # If we have selected "Some Extra" or "Every Possible" as the encounter setting, how many extra encounters should we add for each level?
+    # Note: the randomizer will try to add as many random encounters as you select here, but if the game runs out of unique random
+    #        encounters before we hit this number, the game will have to stack multiple drops onto the same encounter.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 20
+    2: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  loot_shuffle:
+    # Should the encounter rewards (potions, scrolls, etc) be shuffled between encounters?
+    'false': 0
+    'true': 50
+
+  loot_randomizer:
+    # Should the encounter rewards (scrolls, runestones, weapons, etc) be changed by the randomizer?
+    # You can choose to make the new item match the original's type and/or level.
+    do_not_randomize: 0
+    same_type_and_level: 50
+    same_type: 0
+    same_level: 0
+    any_item_at_all: 0
+
+  mod_content:
+    # If you chose options which affect items, builds, or encounters, should the randomizer include modded content?
+    # WARNING: If enabled, changing which mods are installed during a run can cause issues.
+    'false': 50
+    'true': 0
+
+  campaign:
+    # Select which campaign(s) you want to play.
+    # If you include DLC, you must own that dlc or the campaign will not generate.
+    dawnsbury_days: 50
+    profane_barrier: 0
+    dawnsbury_days_and_profane_barrier: 0
+    good_little_children: 0
+    all: 0
+
+  locked_actions:
+    # If enabled, the archipelago will force you to unlock the ability to perform certain actions, such as Strike or Cast a Spell.
+    # Standard mode locks only Strike & Cast a Spell (and related activities), while extreme mode also includes Move & Interact/Manipulate actions.
+    # Notes: Kineticest Impulses count as spells. Spells with attack rolls do not require unlocking strikes, but Spellstrikes require both.
+    #      Using scrolls/items to cast spells is unlocked with interact, not spellcasting, and likewise for strikes with other consumables (like bombs).
+    #      Archipelago will give you at least one attack and spell upgrade by the end of the first scenario, and someone will also unlock movement+interact in extreme mode. 
+    #      You can always Step, and if a character cannot attack or cast spells, they are given a special "Tantrum" action to help prevent softlocks.
+    'off': 50
+    standard: 0
+    extreme: 0
+
+  item_bonuses:
+    # If enabled, the archipelago drops will include item bonuses for characters weapons/armor/skill checks according to the campaign's level range.
+    none: 0
+    automatic: 50
+    manual: 0
+
+  deathlink:
+    # If enabled, losing an encounter will kill all other deathlink players, and other players can cause you to wipe.
+    'false': 50
+    'true': 0
+
+  traps:
+    # For unfilled locations, we can put "Trap" items instead of filler loot bags or skill bonuses.
+    # This setting determine the maximum amount to include.
+    #
+    # You can define additional values between the minimum and maximum values.
+    # Minimum value is 0
+    # Maximum value is 1000
+    0: 50
+    random: 0
+    random-low: 0
+    random-high: 0
+
+  rng_seed:
+    # An arbitraty piece of text to use as a seed for the randomization. (Leave blank to use a random seed)
+    '': 50
+
+  ###########################
+  # Item & Location Options #
+  ###########################
+  local_items:
+    # Forces these items to be in their native world.
+    []
+
+  non_local_items:
+    # Forces these items to be outside their native world.
+    []
+
+  start_inventory:
+    # Start with these items.
+    {}
+
+  start_hints:
+    # Start with these item's locations prefilled into the ``!hint`` command.
+    []
+
+  start_location_hints:
+    # Start with these locations and their item prefilled into the ``!hint`` command.
+    []
+
+  exclude_locations:
+    # Prevent these locations from having an important item.
+    []
+
+  priority_locations:
+    # Prevent these locations from having an unimportant item.
+    []
+
+  item_links:
+    # Share part of your item pool with other players.
+    []
+
+  plando_items:
+    # Generic items plando.
+    []

@@ -18,6 +18,8 @@ public class ApMessages
 {
     // Message Queue //
     private static ConcurrentQueue<(string, Color)> MessageQueue { get; } = new();
+
+    public static bool ReadyForToasts { get; set; } = false;
     
     /*
     * Callback to process a message from the archipelago server
@@ -64,6 +66,13 @@ public class ApMessages
             battle.Log(message.Item1, null, null, null, message.Item2);
     }
 
+    /*
+     * Send a message in the log of an active battle
+     */
+    public static void SendMessageInBattle(TBattle battle, string message, Color? color = null)
+    {
+        battle.Log(message, null, null, null, color ?? Color.LightCoral);
+    }
 
     // All Active Toasts we are managing //
     public static readonly List<Toast> ActiveToasts = [];
@@ -83,7 +92,7 @@ public class ApMessages
     public static void DrawToasts(float elapsedSeconds)
     {
         // Draw nothing unless we are in an active campaign
-        if (DawnsburyArchipelagoLoader.IsArchipelagoCampaignActive())
+        if (DawnsburyArchipelagoLoader.IsArchipelagoCampaignActive() && ReadyForToasts)
         {
             // Determine the position of the toasts (by top left corner)
             int y = 0;

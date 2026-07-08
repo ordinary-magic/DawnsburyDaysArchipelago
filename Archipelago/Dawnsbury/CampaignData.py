@@ -1,16 +1,13 @@
-from typing import List, Tuple
-from .Options import DawnsburyOptions
+from typing import Generator, List, Tuple
+from .Settings import DawnsburyOptions
 
 DEFAULT_CHARACTERS = ["Annacoesta", "Scarlet", "Tok'dar", "Saffi"]
 
 class Campaign():
-    def __init__(self, name: str, encounter_count: int, start_level: int, end_level: int,
-                 start_atk_bonus: int, end_atk_bonus: int,
-                 start_armor_bonus: int, end_armor_bonus: int,
-                 start_skill_bonus: int, end_skill_bonus: int,
-                 potion_loot: List[Tuple[str, int]], scroll_loot: List[Tuple[str, int]],
-                 weapon_loot: List[Tuple[str, int]], tool_loot: List[Tuple[str, int]],
-                 characters: str = DEFAULT_CHARACTERS):
+    def __init__(self, name: str, encounter_count: int,
+                 start_level: int, end_level: int,
+                 encounters_per_level: list[int],
+                 characters: list[str] = DEFAULT_CHARACTERS):
         self.name = name
         self.characters = characters # This probably cant ever not be the default bc of how items are defined, but just in case its here
         self.num_encounters = encounter_count
@@ -18,58 +15,107 @@ class Campaign():
         self.end_level = end_level
 
         # Number of progressive weapon bonuses players start/end with (None, +1, Striking, +2 etc)
-        self.start_atk_bonus = start_atk_bonus
-        self.end_atk_bonus = end_atk_bonus
+        self.start_atk_bonus = get_attack_bonus_at_level(start_level)
+        self.end_atk_bonus = get_attack_bonus_at_level(end_level)
 
         # Number of progressive armor bonuses players start/end with (None, +1, Resilient, +2 etc)
-        self.start_armor_bonus = start_armor_bonus
-        self.end_armor_bonus = end_armor_bonus
+        self.start_armor_bonus = get_armor_bonus_at_level(start_level)
+        self.end_armor_bonus = get_armor_bonus_at_level(end_level)
 
         # Number of progressive item skill check bonuses players start/end with
-        self.start_skill_bonus = start_skill_bonus
-        self.end_skill_bonus = end_skill_bonus
+        self.start_skill_bonus = get_skill_bonus_at_level(start_level)
+        self.end_skill_bonus = get_skill_bonus_at_level(end_level)
 
-        # Armor bonuses not in dd, will add if i do dlc later
+        # Number of progressive perception bonuses players start/end with
+        self.start_perception_bonus = get_perception_bonus_at_level(start_level)
+        self.end_perception_bonus = get_perception_bonus_at_level(end_level)
 
-        # Loot awarded during the adventure, sorted by type. Includes the amount of each item.
-        self.potion_loot = potion_loot
-        self.scroll_loot = scroll_loot
-        self.weapon_loot = weapon_loot
-        self.tool_loot = tool_loot
-        # possibly add a misc category later if needed (eg aeon stones)
+        # Save the encounter list
+        self.encounters_per_level = encounters_per_level
 
-    def get_all_campaign_drops(self, settings: DawnsburyOptions) -> tuple[list[str], list[str]]:
-        '''Using the provided settings, filter and return a complete list of all items to be dropped in the campaign.
+    def get_required_campaign_drops(self, settings: DawnsburyOptions) -> Tuple[List[str], List[str]]:
+        '''Using the provided settings, filter and return a complete list of all required items to be dropped in the campaign.
            Returns two lists: the first is items which need to be duplicated for each player, and the second is items that are as they are'''
-        return self.get_per_character_drops(settings), self.get_singe_drops(settings)
-        
-
-    def get_per_character_drops(self, settings: DawnsburyOptions) -> List[str]:
-        '''Return a list of drops which are per-character (eg Annocesta's Level Up)'''
-        drops = []
+        per_character_drops = []
         
         # Add the requisite number of level ups to the list
-        drops += ["Level Up"] * (self.end_level - self.start_level)
+        per_character_drops += ["Level Up"] * (self.end_level - self.start_level)
 
-        # Add Weapon rune increases
-        drops += ["Weapon Upgrade"] * (self.end_atk_bonus - self.start_atk_bonus)
+        # Check if the settings tell us to include automatic item bonuses
+        if (settings.item_bonuses.value > 0):
 
-        # Add Armor rune increases
-        drops += ["Armor Upgrade"] * (self.end_armor_bonus - self.start_armor_bonus)
+            # Add Weapon rune increases
+            per_character_drops += ["Weapon Upgrade"] * (self.end_atk_bonus - self.start_atk_bonus)
+
+            # Add Armor rune increases
+            per_character_drops += ["Armor Upgrade"] * (self.end_armor_bonus - self.start_armor_bonus)
+
+        # Make all singleton drops (there currently are none)
+        singleton_drops = []
         
-        # Add Skill item increases
-        drops += ["Skill Upgrade"] * (self.end_skill_bonus - self.start_skill_bonus)
-        
-        return drops
-
-    def get_singe_drops(self, settings: DawnsburyOptions) -> List[str]:
-        '''Return a list of standard item drops (Eg. +1 Longsword)'''
-        return [] # Currently we dont randomize any of these
+        return (per_character_drops, singleton_drops)
     
-    def get_maximum_amount_of_drops(self) -> int:
-        '''Assuming the most generous settings, what is the maximum possible number of drops this campaign can yield'''
-        return 4 * (self.end_atk_bonus - self.start_atk_bonus + self.end_level - self.start_level) +\
-            len(self.potion_loot) + len(self.scroll_loot) + len(self.weapon_loot) + len(self.tool_loot)
+    def filler_character_drop_generator(self, settings: DawnsburyOptions) -> Generator[str, None, None]:
+        '''Using the provided settings, generate all the per-character filler items that can be dropped in the campaign.'''
+
+        # Check if the settings tell us to include automatic item bonuses
+        # TODO: figure out what to do with these in "manual" bonus runs
+        if (settings.item_bonuses.value == 1):
+
+            # Yield all Perception item increases
+            for _ in range(0, self.end_perception_bonus - self.start_perception_bonus):
+                yield "Perception Upgrade"
+
+            # Yield all Skill item increases
+            for _ in range(0, self.end_skill_bonus - self.start_skill_bonus):
+                yield "Skill Upgrade"
+
+
+        # Yield anything else, when added
+
+    def filler_single_item_drop_genertator(self, settings: DawnsburyOptions) -> Generator[str, None, None]:
+        '''Using the provided settings, generate all one-off items that can be dropped by the campaign'''
+
+        # Nothing to do
+        yield from ()
+
+    def num_levels(self):
+        return self.end_level + 1 - self.start_level
+
+def get_attack_bonus_at_level(level: int) -> int:
+    '''Determine the number of progressive weapon bonuses players should have at this level (None, +1, Striking, +2 etc)'''
+    if   level < 2:  return 0
+    elif level < 4:  return 1
+    elif level < 10: return 2
+    elif level < 12: return 3
+    elif level < 16: return 4
+    elif level < 19: return 5
+    else:            return 6
+
+def get_armor_bonus_at_level(level: int) -> int:
+    '''Determine the number of progressive weapon bonuses players should have at this level (None, +1, Reslilent, +2 etc)'''
+    if   level < 6:  return 0 # Should be 5, but this way it drops during profane barrier
+    elif level < 8:  return 1
+    elif level < 11: return 2
+    elif level < 14: return 3
+    elif level < 18: return 4
+    elif level < 20: return 5
+    else:            return 6
+
+def get_skill_bonus_at_level(level: int) -> int:
+    '''Determine the item bonus to skills the players should have at this level'''
+    # Note: Abp gives one extra bonus at threshold levels, selected like a feat. we jsut do a global bonus insetad.
+    if   level < 3:  return 0
+    elif level < 9:  return 1
+    elif level < 17: return 2
+    else:            return 3
+
+def get_perception_bonus_at_level(level: int) -> int:
+    '''Determine the item bonus to perception the players should have at this level'''
+    if   level < 7:  return 0
+    elif level < 13: return 1
+    elif level < 19: return 2
+    else:            return 3
 
 def get_chosen_campaign(options: DawnsburyOptions) -> Campaign:
     '''Determine what campaign(s) are selected in the options.'''
@@ -84,85 +130,45 @@ def make_campaign_metadata(options: DawnsburyOptions) -> dict[str, object]:
         'start_atk_bonus': campaign.start_atk_bonus,
         'start_armor_bonus': campaign.start_armor_bonus,
         'start_skill_bonus': campaign.start_skill_bonus,
+        'start_perception_bonus': campaign.start_perception_bonus,
         'end_atk_bonus': campaign.end_atk_bonus,
         'end_armor_bonus': campaign.end_armor_bonus,
         'end_skill_bonus': campaign.end_skill_bonus,
+        'end_perception_bonus': campaign.end_perception_bonus,
         'num_encounters': campaign.num_encounters
     }
 
+def merge_campaings(campaigns: list[Campaign]) -> Campaign:
+    '''Given multiple campaigns, combine their metadata into a single merged campaign'''
+
+    # Merge the metadata appropriateley to its type
+    name = " and ".join(map(lambda c: c.name, campaigns)) # Campaign 1 and Campaign 2
+    characters = campaigns[0].characters
+    num_encounters = sum(map(lambda c: c.num_encounters, campaigns))
+    start_level = min(map(lambda c: c.start_level, campaigns))
+    end_level = max(map(lambda c: c.end_level, campaigns))
+
+    # Merge the encounter list
+    encounters_per_level = []
+    for campaign in campaigns:
+        encounters_per_level += campaign.encounters_per_level
+
+    # Create and return the resultant campaign
+    return Campaign(name, num_encounters, start_level, end_level, encounters_per_level, characters)
+
 DawnsburyDays: Campaign = Campaign(
-    "The Quest for the Golden Candelabra", 21, 1, 4, 0, 2, 0, 0, 0, 0,
-    [
-        ("Healing Potion (Lesser)", 9),
-        ("Healing Potion (Minor)", 3),
-        ("Healing Potion (Moderate)", 3),
-        ("Barkskin Potion", 2),
-        ("Potion of Invisibility", 3),
-        ("Bottled Omen", 4),
-        ("Fluid Movement Elixr", 2),
-    ],
-    [
-        ("Scroll of Burning Hands", 1),
-        ("Scroll of Heal", 3),
-        ("Scroll of Bless", 2),
-        ("Scroll of Bane", 1),
-        ("Scroll of Flaming Sphere", 2),
-        ("Scroll of Summon Elemental", 2),
-        ("Scroll of Summon Animal", 1),
-        ("Scroll of Harm", 2),
-        ("Scroll of Sudden Blight", 1),
-        ("Scroll of Grease", 1),
-        ("Scroll of Invisibility", 1),
-        ("Scroll of Dimension Door", 1),
-        ("Scroll of Slow", 1),
-        ("Scroll of Resist Energy", 1),
-    ],
-    [
-        ("Orc Necksplitter", 1),
-        ("+1 Orc Necksplitter", 1),
-        ("+1 Rapier", 1),
-        ("+1 Striking Rapier", 1),
-        ("+1 Longsword", 1),
-        ("+1 Morningstar", 1),
-        ("+1 Greatclub", 1),
-        ("+1 Earthbreaker", 1),
-        ("+1 Heavy Crossbow", 1),
-        ("+1 Striking Shorbow", 1),
-        ("+1 Sickle", 1),
-        ("+1 Striking Greatsword", 1),
-        ("+1 Kukri", 1),
-        ("+1 Striking Trident", 2),
-        ("+1 Handwraps of Mighty Blows", 1)
-    ],
-    [
-        ("+1 leather armor", 1),
-        ("Expanded Healer's Tools", 1),
-        ("Gate Attenuator", 1),
-], [])
+    "Dawnsbury Days", 21, 1, 4, [5, 6, 5, 5])
 
 ProfaneBarrier: Campaign = Campaign(
-    "The Profane Barrier", 24, 5, 8, 2, 2, 0, 2, 0, 1,
-    # TODO: put actual items here (or not, since they arent used.)
-    [], [], [], [], [
+    "The Profane Barrier", 24, 5, 8, [7, 5, 7, 5])
 
-    ])
-
-    # TBD if this is playable by itself, or just as part of dd campaign.
-    # 24 Encounters, Rewards should be as follows:
-    # 3x4 level ups
-    # 1x4 Armor Resilence
-    # 1x4 Armor Resistance
-    # 3 Item Drops
-    # 1 Beat the game
-
-MergedCampaign: Campaign = Campaign(
-    "Dawnsbury Days and the Profane Barrier", 
-    45, 1, 8, 0, 2, 0, 2, 0, 0, [], [], [], [], [])
-    # Merged campaign has same loot, except replaces the item bonuses 
-    #   and one beat the campaign with another set of level ups (4->5).
+GoodLittleChildren: Campaign = Campaign(
+    "Good Little Children", 5, 9, 9, [5]) # cant do much with this by iteself, but who knows
 
 All_Campaigns: List[Campaign] = [
     DawnsburyDays,
     ProfaneBarrier,
-    MergedCampaign
+    merge_campaings([DawnsburyDays, ProfaneBarrier]),
+    GoodLittleChildren,
+    merge_campaings([DawnsburyDays, ProfaneBarrier, GoodLittleChildren])
 ]

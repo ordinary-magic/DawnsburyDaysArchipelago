@@ -8,10 +8,10 @@ using Dawnsbury.Campaign.Path;
 using Dawnsbury.Core;
 using Dawnsbury.Core.Creatures;
 using Dawnsbury.Core.Mechanics;
-using Dawnsbury.Core.Mechanics.Treasure;
 using Dawnsbury.Display.Notifications;
 using Dawnsbury.Modding;
 using Dawnsbury.Phases.Menus;
+using DawnsburyArchipelago.Data;
 using HarmonyLib;
 
 namespace DawnsburyArchipelago;
@@ -41,14 +41,13 @@ public class DawnsburyArchipelagoLoader
             ModdedAdventurePaths.AllModdedPaths.Add(RandomDawnsburyDays);
         }*/
 
-        // Initialize the per-creature effects required by the mod
+        // Initialize the per-class effects required by the mod
         ModManager.RegisterActionOnEachCreature(OnCreatureLoad);
         ModManager.RegisterActionOnEachItem(Loot.AddApItemModifications);
 
         // Register the drawing modifications used by the mod
         //ModManager.Frontend.RegisterAtEndOfDrawFrame(ApMessages.DrawToasts); // doesnt work, since we dont get frame time
         ArchipelagoSetupMenu.RegisterArchipelagoButtonInModManager();
-        Loot.ReplaceRunestoneRuleTextGenerator();
 
         LoadHarmony();
     }
@@ -65,15 +64,9 @@ public class DawnsburyArchipelagoLoader
         var dd_spawnhero_tosheet = FindInternalMethod(typeof(GameLoop), "SpawnInitials", "SpawnHero");
         harmony.Patch(dd_spawnhero_tosheet, transpiler: new HarmonyMethod(SpawnHeroTranspiler));
 
-        // Patch CampaignMenuPhase.CreateViews in order to check for loot drops whenever we load the campaign menu
-        var dd_campaign_menu_create = typeof(CampaignMenuPhase).GetMethod("CreateViews", BindingFlags.NonPublic | BindingFlags.Instance);
+        // Patch CampaignMenuPhase.CreateViews in order to track when we are in a menu
+        var dd_campaign_menu_create = typeof(CampaignMenuPhase).GetMethod(nameof(CampaignMenuPhase.CreateViewsWithKeepingIndex), BindingFlags.Public | BindingFlags.Instance);
         harmony.Patch(dd_campaign_menu_create, postfix: new HarmonyMethod(OnCampaignMenuLoad));
-        
-        // Patch Armor/WeaponProperties.ItemBous in order to fake the bonus amount in menus to allow us to attach runes
-        var dd_armor_item_bonus = typeof(ArmorProperties).GetProperty("ItemBonus", BindingFlags.Public | BindingFlags.Instance | BindingFlags.GetProperty);
-        var dd_weapon_item_bonus = typeof(WeaponProperties).GetProperty("ItemBonus", BindingFlags.Public | BindingFlags.Instance | BindingFlags.GetProperty);
-        harmony.Patch(dd_armor_item_bonus?.GetGetMethod(), postfix: new HarmonyMethod(Loot.ItemBonusPostfix));
-        harmony.Patch(dd_weapon_item_bonus?.GetGetMethod(), postfix: new HarmonyMethod(Loot.ItemBonusPostfix));
 
         // Patch Toasts.Draw to make it also call our toast method.
         var dd_toasts_draw = typeof(Toasts).GetMethod(nameof(Toasts.Draw), BindingFlags.Public | BindingFlags.Static);
@@ -102,16 +95,26 @@ public class DawnsburyArchipelagoLoader
             // Load the archipelago campaign, using the correct settings
             ArchipelagoCampaign = ArchipelagoClient.Instance.Campaign switch
             {
-                ArchipelagoClient.ApCampaignChoice.DawnsburyDays =>
+                ApCampaignChoice.DawnsburyDays =>
                     ArchipelagoPathRandomizer.ShufflePath(DawnsburyDaysAdventurePath.DawnsburyDaysPath),
 
-                ArchipelagoClient.ApCampaignChoice.TheProfaneBarrier =>
+                ApCampaignChoice.TheProfaneBarrier =>
                     ArchipelagoPathRandomizer.ShufflePath(TryToLoadProfaneBarrierAdventurePath()),
 
-                ArchipelagoClient.ApCampaignChoice.Both =>
+                ApCampaignChoice.DDandPB =>
                     ArchipelagoPathRandomizer.ShufflePaths([
                         DawnsburyDaysAdventurePath.DawnsburyDaysPath,
                         TryToLoadProfaneBarrierAdventurePath(),
+                    ]),
+                    
+                ApCampaignChoice.GoodLittleChildren =>
+                    ArchipelagoPathRandomizer.ShufflePath(TryToLoadGoodLittleChildrenPath()),
+                    
+                ApCampaignChoice.All3 =>
+                    ArchipelagoPathRandomizer.ShufflePaths([
+                        DawnsburyDaysAdventurePath.DawnsburyDaysPath,
+                        TryToLoadProfaneBarrierAdventurePath(),
+                        TryToLoadGoodLittleChildrenPath(),
                     ]),
                 
                 _ => throw new InvalidOperationException($"Unknown Campaign: {ArchipelagoClient.Instance.Campaign}. Your mod might be out of date.")
@@ -127,7 +130,17 @@ public class DawnsburyArchipelagoLoader
     {
         var path = LoadDlcAdventurePath("Dawnsbury.TheProfaneBarrier", "Dawnsbury.Dlc.TheProfaneBarrierAdventurePath", "ProfaneBarrierPath");
         return path ??
-            throw new InvalidOperationException("Could not load The Profane Barrier for Archipelago: DLC is not installed.");
+            throw new InvalidOperationException("Could not load \"The Profane Barrier\" for Archipelago: DLC is not installed.");
+    }
+    
+    /**
+     * Try to load the profane barrier adventure path if the dll is installed.
+     */
+    private static AdventurePath TryToLoadGoodLittleChildrenPath()
+    {
+        var path = LoadDlcAdventurePath("Dawnsbury.GoodLittleChildrenNeverGrowUp", "Dawnsbury.Dlc.GoodLittleChildrenAdventurePath", "GoodLittleChildrenPath");
+        return path ??
+            throw new InvalidOperationException("Could not load \"Good Little Children Never Grow Up\" for Archipelago: DLC is not installed.");
     }
 
     /**
@@ -234,14 +247,25 @@ public class DawnsburyArchipelagoLoader
         // Only proceed if this creature is a pc and we are connected to archipelago
         if (IsArchipelagoCampaignActive() && creature.PersistentCharacterSheet != null)
         {
-            // Add the qeffect to automatically adjusts stats as we progress
-            creature.AddQEffect(CharacterStatus.GetProgressAdjustmentQEffect());
+            if (ArchipelagoClient.Instance is ArchipelagoClient client)
+            {
+                // Create the automatic item bonus QEffect if needed
+                if (client.ItemBonusSetting == ApItemBonusSettings.Automatic)
+                    creature.AddQEffect(CharacterStatus.GetAutomaticItemBonusQEffect());
+
+                // Create the action locking QEffect if needed
+                if (client.ShouldLockActions.LockBasicActions())
+                    creature.AddQEffect(CharacterStatus.GetActionLockingQEffect());
+            }
 
             // Setup the Battle Result QEffect
             creature.AddQEffect(GetEndOfBattleQEffect());
 
             // Setup the automatic tpk event
             creature.AddQEffect(GetDeatlinkCheckingQEffect());
+            
+            // Create the QEffect to process trap events
+            creature.AddQEffect(CharacterStatus.GetTrapApplicationQEffect());
         }
 
         // Do the following on every characer when we are connected, regardless of if they are a pc
@@ -292,14 +316,21 @@ public class DawnsburyArchipelagoLoader
                 // Only want to trigger this once, so check if we are the first pc in the party
                 if (qfSelf.Owner.CreatureId == CharacterStatus.CampaignHeroes[0])
                 {
-                    if (wasVictory)
+                    // Try to catch up on any pending loot drops as we return to the campaign menu
+                    Loot.TryToAwardPendingLoot();
+
+                    var encounter = qfSelf.Owner.Battle.Encounter;
+
+                    // If this was the final mission, win the game
+                    if (encounter.IsFinalCampaignEncounter)
+                        result = ArchipelagoClient.Instance?.BeatGame();
+
+                    // Otehrwise, send either a location or a deathlink, depending on the battle result
+                    else if (wasVictory)
                         result = ArchipelagoClient.Instance?.SendNextEncounterLocation();
                     else
                         result = ArchipelagoClient.Instance?.SendDeathlink(qfSelf.Owner.Battle.VictoryReason);
                 }
-
-                // Try to catch up on any pending loot drops as we return to the campaign menu
-                Loot.TryToAwardPendingLoot();
 
                 return result ?? Task.CompletedTask;
             }
@@ -329,6 +360,7 @@ public class DawnsburyArchipelagoLoader
         if (IsArchipelagoCampaignActive(false))
         {
             InApCampaignMenu = true;
+            ApMessages.ReadyForToasts = true;
             Loot.TryToAwardPendingLoot();
         }
     }

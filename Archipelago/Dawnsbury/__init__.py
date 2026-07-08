@@ -1,10 +1,10 @@
 from .CampaignData import make_campaign_metadata
-from .Items import BASE_OFFSET, create_item, create_items, ap_get_all_items, DawnsburyItem
+from .Items import BASE_OFFSET, create_item, create_items, ap_get_all_items, get_excluded_item_ids, DawnsburyItem
 from .Locations import location_resolver_cache
-from .Options import make_option_slot_data, DawnsburyOptions
+from .Settings import make_option_slot_data, DawnsburyOptions
 from .Regions import create_regions
 from .Rules import set_rules
-from ..AutoWorld import World
+from ..AutoWorld import World # pyright: ignore[reportMissingImports]
 
 class DawnsburyWorld(World):
     """
@@ -37,5 +37,6 @@ class DawnsburyWorld(World):
         slot_data = make_option_slot_data(self.options)
         slot_data.update(make_campaign_metadata(self.options))
         slot_data['base_offset'] = BASE_OFFSET
-        slot_data['version'] = 10300 # 1.03.00
+        slot_data['version'] = 10400 # 1.04.00
+        slot_data['excluded_items'] = get_excluded_item_ids()
         return slot_data

@@ -8,19 +8,10 @@ using Archipelago.MultiClient.Net.Helpers;
 using Archipelago.MultiClient.Net.BounceFeatures.DeathLink;
 using Archipelago.MultiClient.Net.Packets;
 using System.Linq;
+using DawnsburyArchipelago.Data;
+using Newtonsoft.Json.Linq;
 
 namespace DawnsburyArchipelago;
-
-/*
- * Archipelago connection helper class
- */
-public class ApConnectionInfo(string server, int port, string slot, string password)
-{
-    public string Server { get; set; } = server;
-    public int Port { get; set; } = port;
-    public string Slot { get; set; } = slot;
-    public string Password { get; set; } = password;
-}
 
 public class ArchipelagoClient(ApConnectionInfo connection)
 {
@@ -30,53 +21,36 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     // Debug Property to enable simulated effects without an archipelago connection
     public static readonly bool MockArchipelago = false;
 
-    private const int PROTOCOL_VERSION = 10300; // 1.03.00
-
-    // Enum defining the item types we get from the server
-    public enum ApItemTypes
-    {
-        LevelUp,
-        WeaponImprovement,
-        ArmorImprovement,
-        SkillImprovement
-    }
-
-    // Enum defining the encounter difficulty options
-    public enum ApEncounterDifficulty
-    {
-        Simple,
-        Balanced,
-        Difficult
-    }
-
-    // Enum detailing the campaign selection options
-    public enum ApCampaignChoice
-    {
-        DawnsburyDays,
-        TheProfaneBarrier,
-        Both
-    }
+    private const int PROTOCOL_VERSION = 10400; // 1.04.00
 
     // Properties //
     public bool Ready { get; private set; } = false; // Is the client ready to go
     public static bool InstanceReady => Instance?.Ready ?? false; // static shortcut for ^
+    private long apBaseIDOffset = 0; // Archipelago ids must have a unique range, so we start at the offset
 
     // Configuration Information //
     public string RngSeed { get; set; } = "";
     public bool UseRandomEncounterOrder { get; private set; } = false;
-    public ApEncounterDifficulty EncounterDifficulty = ApEncounterDifficulty.Balanced;
+    public int MaxShuffleLevelDifference = 0;
     public ApCampaignChoice Campaign = ApCampaignChoice.DawnsburyDays;
-    public bool IncludeFreeEncounters = false;
-    public bool ShuffleEncounterLoot { get; private set; } = false;
-    public bool RandomizeEncounterLoot { get; private set;} = false;
-    private long apBaseIDOffset = 0; // Archipelago ids must have a unique range, so we start at the offset
-    public bool PotencyRunes { get; private set; } = false;
-    public static bool InstancePotencyRunes => Instance?.PotencyRunes ?? false; // static shortcut for PotencyRunes
+    public ApFreeEncounterOptions IncludeFreeEncounters = ApFreeEncounterOptions.None;
+    public bool IncludeExtremePlusFreeEncounters = false;
+    public bool ShuffleEncounterLoot = false;
+    public ApLootRandomization RandomizeEncounterLoot = ApLootRandomization.None;
+    public ApItemBonusSettings ItemBonusSetting = ApItemBonusSettings.Automatic;
+    public ApLockedActions ShouldLockActions = ApLockedActions.None;
+    public bool ShouldIncludeMods = false;
+    private int bonusLocationStart = 0;
 
     // State Data //
-    public int EncountersCleared { get; set; } = 0; // TODO (Eventually): sync this with the server to allow resuming runs. 
+    public int EncountersCleared { get; set; } = 0; // TODO (Eventually): sync this with the server to allow resuming runs.
+    public int BonusEncountersCleared { get; set; } = 0;
     public int ItemsRecieved { get; set; } = 0; // Total amount of items recieved from archipelago
     public int InventoryItemsSaved { get; set; } = 0; // Number of items recieved which are saved in the character inventories
+    public int LocationCount => apSession.Locations.AllLocations.Count; // The total amount of locations we must check.
+    public List<int> ExtraBonusEncounters { get; } = []; // List of encounters which should drop a "bonus" location, in addition to their normal check
+    public List<int> StandaloneBonusEncoutners { get; } = []; // List of encounters which should drop a "bonus" location instead of their normal check
+    public List<int> NoRewardEncounters { get; } = []; // List of encounters which do not award anything, and should be ignored by archipealgo
 
     // Constant Fields //
     private readonly ArchipelagoSession apSession = ArchipelagoSessionFactory.CreateSession(connection.Server, connection.Port);
@@ -88,7 +62,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     private DeathLinkService? DeathLink { get; set; }
     private static string TPKReason { get; set; } = "";
     private int deathLinkCounter = 0;
-    private int deathLinkAmount = 1;
+    private readonly int deathLinkAmount = 1;
 
     // Methods //
     /*
@@ -157,14 +131,19 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         ShuffleEncounterLoot = Convert.ToBoolean(slotData["loot_shuffle"]);
 
         // Settings which weren't in the first version need default values in case of version mismatch
-        EncounterDifficulty = (ApEncounterDifficulty) Convert.ToInt32(slotData.GetValueOrDefault("shuffle_difficulty") ?? EncounterDifficulty);
-        IncludeFreeEncounters = Convert.ToBoolean(slotData.GetValueOrDefault("include_free_encounters") ?? IncludeFreeEncounters);
         Campaign = (ApCampaignChoice) Convert.ToInt32(slotData.GetValueOrDefault("campaign") ?? Campaign);
-        PotencyRunes = Convert.ToBoolean(slotData.GetValueOrDefault("potency_runes"));
-        RandomizeEncounterLoot = Convert.ToBoolean(slotData.GetValueOrDefault("loot_randomizer"));
+        InitializeVersionedOptions(slotData, serverVersion);
 
         // Initialize the character's status
-        CharacterStatus.InitializeCampaignHeroes(slotData);
+        int start_level = Convert.ToInt32(slotData["start_level"]);
+        int atk_bonus = Convert.ToInt32(slotData["start_atk_bonus"]);
+        int armor_bonus = Convert.ToInt32(slotData.GetValueOrDefault("start_armor_bonus") ?? 0); // new metadata
+        int skill_bonus = Convert.ToInt32(slotData.GetValueOrDefault("start_skill_bonus") ?? 0); // new metadata
+        int perception = Convert.ToInt32(slotData.GetValueOrDefault("start_perception_bonus") ?? skill_bonus); // new metadata
+        CharacterStatus.InitializeCampaignHeroes(start_level, atk_bonus, armor_bonus, skill_bonus, perception, ShouldLockActions);
+
+        // Check for "free" unlocks
+        CheckForAutomaticUnlocks(slotData);
 
         // Setup the deathlink service if its enabled
         if (Convert.ToBoolean(slotData["deathlink"]))
@@ -192,16 +171,86 @@ public class ArchipelagoClient(ApConnectionInfo connection)
 
         // Initialize the data storage if it doesnt already have a value
         apSession.DataStorage[Scope.Slot, "encounters_cleared"].Initialize(0);
+        apSession.DataStorage[Scope.Slot, "bonus_encounters_cleared"].Initialize(0);
         apSession.DataStorage[Scope.Slot, "inventory_items_saved"].Initialize(0);
 
         // Load saved progress from the server
         EncountersCleared = apSession.DataStorage[Scope.Slot, "encounters_cleared"];
+        BonusEncountersCleared = apSession.DataStorage[Scope.Slot, "bonus_encounters_cleared"];
         InventoryItemsSaved = apSession.DataStorage[Scope.Slot, "inventory_items_saved"];
         CatchUpToOldItems();
 
         // If we are successfully configured, we are the relevant instance
         Instance = this;
         Ready = true;
+    }
+
+    /*
+    * Configure options whose data type or format was added or changed in later versions
+    */
+    private void InitializeVersionedOptions(Dictionary<string, object> slotData, int serverVersion)
+    {
+        if (serverVersion >= 10400)
+        {
+            ItemBonusSetting  = (ApItemBonusSettings) Convert.ToInt32(slotData["item_bonuses"]);
+            ShouldLockActions = (ApLockedActions) Convert.ToInt32(slotData["locked_actions"]);
+            ShouldIncludeMods = Convert.ToBoolean(slotData["mod_content"]);
+            MaxShuffleLevelDifference = Convert.ToInt32(slotData["shuffle_level"]);
+            IncludeFreeEncounters = (ApFreeEncounterOptions) Convert.ToInt32(slotData["include_free_encounters"]);
+            IncludeExtremePlusFreeEncounters = Convert.ToBoolean(slotData["include_extreme_encounters"]);
+            RandomizeEncounterLoot = (ApLootRandomization) Convert.ToInt32(slotData["loot_randomizer"]);
+            
+            // "Bonus" items are new as of this version. We dont have to set it in previous versions because it wont come up.
+            long id = apSession.Locations.GetLocationIdFromName(apSession.Players.ActivePlayer.Game , "Bonus #1");
+            bonusLocationStart = (int)(id - apBaseIDOffset); // We want it in item space, not location space
+        }
+        else
+        {
+            // Shuffle Level Difference used to be an enum, which we must convert
+            var shuffleDifficulty = (ApEncounterDifficulty) Convert.ToInt32(slotData.GetValueOrDefault("shuffle_difficulty") ?? 0);
+            MaxShuffleLevelDifference = shuffleDifficulty switch
+            {
+                ApEncounterDifficulty.Balanced => 1,
+                ApEncounterDifficulty.Difficult => 20,
+                _ => 0
+            };
+        }
+        
+        if (serverVersion == 10300)
+        { 
+            // In version 1.3.0, this was a boolean with a different name
+            bool potency = Convert.ToBoolean(slotData.GetValueOrDefault("potency_runes"));
+            ItemBonusSetting = potency? ApItemBonusSettings.Manual : ApItemBonusSettings.Automatic;
+        }
+
+        // Anyhting not listed will simply use its default value
+    }
+
+    /*
+    * Check for any items which are unlocked automatically
+    */
+    private void CheckForAutomaticUnlocks(Dictionary<string, object> slotData)
+    {
+        // TODO: need to lookup how to deserialize the json object here
+        //var items = (long[]) (slotData.GetValueOrDefault("excluded_items") ?? Array.Empty<long>());
+
+        // Only proceed if we actually have any excluded items
+        if (!slotData.TryGetValue("excluded_items", out object? value))
+            return;
+
+        var items = JArray.FromObject(value).Values<long>();
+
+        // Check for who (if anybody) has the starter interact
+        if (ShouldLockActions == ApLockedActions.Extreme)
+            foreach (var id in items)
+            {
+                int localId = (int) (id - apBaseIDOffset);
+                if (localId / 4 == (int) ApPerCharacterItemTypes.Interact)
+                {
+                    ApMessages.LogEvent($"Got a Starter Item - Interact!");
+                    CharacterStatus.ApplyCharacterUpgradeItem(localId, false);
+                }
+            }
     }
 
     /*
@@ -232,11 +281,47 @@ public class ArchipelagoClient(ApConnectionInfo connection)
      */
     private async Task<bool> GiveArchipelagoItem(ItemInfo item, bool canIssuePermanant = true)
     {
-        ApMessages.LogEvent($"Got {item.ItemName} from {item.Player.Name}!");
-        bool permanent = await Task.Run(() =>
-            CharacterStatus.ApplyArchipelagoItem(GetItemId(item), canIssuePermanant));
-        if (permanent && canIssuePermanant) InventoryItemsSaved++;
-        return permanent;
+        int id = GetItemId(item);
+        bool permanant = false;
+
+        // Check if it's per-character upgrade item
+        if (id < (int)ApPerCharacterItemTypes.END * 4)
+        {
+            ApMessages.LogEvent($"Got {item.ItemName} from {item.Player.Name}!");
+            permanant = await Task.Run(() =>
+                CharacterStatus.ApplyCharacterUpgradeItem(id, canIssuePermanant));
+        }
+            
+        // Check if its a loot bag
+        else if (id == (int) ApSingletonItemTypes.LootBag)
+        {
+            // Dont drop duplicate loot bags
+            if (canIssuePermanant)
+            {
+                ApMessages.LogEvent($"{item.Player.Name} found some Loot!");
+                Loot.AwardLootBag(ShouldIncludeMods, ItemBonusSetting == ApItemBonusSettings.None);
+            }
+            permanant = true;
+        }
+
+        // Check if its a trap item
+        else if (id >= (int) ApSingletonItemTypes.ClumsyTrap)
+        {
+            // Traps are not saved in your inventory, but they behave similarly in that
+            //    we want them to only trigger once. This mostly accomplishes that.
+            if (canIssuePermanant)
+            {
+                ApMessages.LogEvent($"{item.Player.Name} triggerd a {item.ItemName}!");
+                CharacterStatus.PendingTraps.Enqueue((ApSingletonItemTypes) id);
+            }
+            permanant = true;
+        }
+
+        // Update our state tracking
+        if (permanant && canIssuePermanant) 
+            InventoryItemsSaved++;
+        
+        return permanant;
     }
 
     /*
@@ -265,19 +350,74 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     /*
      * Tell archipelago that we cleared the next encounter
      */
-    public Task SendNextEncounterLocation()
+    public async Task SendNextEncounterLocation()
     {
-        apSession.DataStorage[Scope.Slot, "encounters_cleared"] = EncountersCleared + 1;
-        return SendLocationCheck(EncountersCleared++);
+        // Award any additional bonus locations which are stacked onto this encounter
+        foreach (int _ in ExtraBonusEncounters.Where(id => id == EncountersCleared))
+            await SendNextBonusEncounterLocation();
+
+        // If this location has a standalone bonus encounter, we award it instead of the next regular encounter
+        if (StandaloneBonusEncoutners.Contains(EncountersCleared))
+        {
+            IncrementEncounterCount();
+            await SendNextBonusEncounterLocation();
+        }
+
+        // If this is an encounter which does not award anything, then just increment the count and move on
+        else if (NoRewardEncounters.Contains(EncountersCleared))
+            IncrementEncounterCount();
+
+        // Otherwise, send the normal location check
+        else
+            await SendNextBaseEncounterLocation();
+    }
+
+    /**
+     * Tell archiepalgo that we cleared a bonus encounter
+     */
+    private Task SendNextBonusEncounterLocation()
+    {
+        apSession.DataStorage[Scope.Slot, "bonus_encounters_cleared"] = BonusEncountersCleared + 1;
+        return SendLocationCheck(bonusLocationStart + BonusEncountersCleared++);
+    }
+
+    /**
+     * Tell archiepalgo that we cleared a regular encounter
+     */
+    private async Task SendNextBaseEncounterLocation()
+    {
+        int standaloneBonuses = StandaloneBonusEncoutners.Count(id => id < EncountersCleared);
+        int noRewardCount = NoRewardEncounters.Count(id => id < EncountersCleared);
+        await SendLocationCheck(EncountersCleared - standaloneBonuses - noRewardCount);
+        IncrementEncounterCount();
+    }
+
+    /**
+     * Update the count of clered encoutners in archipelago
+     */
+    private void IncrementEncounterCount()
+    {
+        EncountersCleared++;
+        apSession.DataStorage[Scope.Slot, "encounters_cleared"] = EncountersCleared;
     }
 
     /*
      * Tell archipelago that we cleared an encounter
      */
-    public Task SendLocationCheck(int locationId)
+    public Task SendLocationCheck(int locationId) => SendLocationChecks([locationId]);
+    
+    /*
+     * Tell archipelago that we cleared a number of encounters
+     */
+    public Task SendLocationChecks(int[] locationIds)
     {
-        Task result = Task.CompletedTask; // Default task that does nothing
-        locationsToNotify.Add(locationId + apBaseIDOffset);
+        // Convert the locations to ap locations, ignoring invalid or duplicate locations
+        //   Note: while duplicates dont matter, we filter out the "last" location on the server, so it wont know about it.
+        locationsToNotify.AddRange(locationIds
+            .Select(id => id + apBaseIDOffset)
+            .Where(apSession.Locations.AllMissingLocations.Contains)
+        );
+
         if (apSession != null)
         {
             try
@@ -285,14 +425,11 @@ public class ArchipelagoClient(ApConnectionInfo connection)
                 // Save the awaitable as a task for the parent to wait on.
                 // Do snapshotting in case the check in takes time, so that we dont accidentally clear the list incorrectly.
                 //   Archipeligo will ignore duplicate location updates, so we dont need to worry about that condition.
-                result = Task.Run(async () =>
+                return Task.Run(async () =>
                 {
                     var snapshot = locationsToNotify.ToList();
                     await apSession.Locations.CompleteLocationChecksAsync([.. snapshot]);
                     locationsToNotify.RemoveAll(location => snapshot.Contains(location));
-
-                    // After updating the locations, we can check the game's state
-                    CheckIfGameBeaten();
                 });
             }
             catch (Exception e)
@@ -300,7 +437,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
                 ApMessages.LogError($"Couldn't Connect to Archipelago: {e.Message}");
             }
         }
-        return result;
+        return Task.CompletedTask;
     }
 
     /*
@@ -344,16 +481,19 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     /*
      * Check if the game is complete, and notify archipelago if it is
      */
-    private void CheckIfGameBeaten()
+    public Task BeatGame()
     {
-        // Game is compelete once every encounter is cleared
-        if (apSession.Locations.AllMissingLocations.Count == 0)
-            apSession.Socket.SendPacket(new StatusUpdatePacket
-            {
-                Status = ArchipelagoClientState.ClientGoal
-            });
-    }
+        // Send the "Won the game" status update
+        apSession.Socket.SendPacket(new StatusUpdatePacket
+        {
+            Status = ArchipelagoClientState.ClientGoal
+        });
 
+        // Check all missing locations (all encounters cleared)
+        return apSession.Locations.CompleteLocationChecksAsync([..
+            apSession.Locations.AllMissingLocations
+        ]);
+    }
     
     /*
      * Get specific slot data from archipelago, or the default value if that fails

@@ -2,14 +2,13 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using Dawnsbury.Auxiliary;
 using Dawnsbury.Campaign.Path;
 using Dawnsbury.Core.CharacterBuilder;
 using Dawnsbury.Core.CharacterBuilder.FeatsDb.Spellbook;
 using Dawnsbury.Core.Creatures;
 using Dawnsbury.Core.Mechanics.Enumerations;
 using Dawnsbury.Core.Mechanics.Treasure;
-using Dawnsbury.Display.Controls.Statblocks;
+using DawnsburyArchipelago.Data;
 
 namespace DawnsburyArchipelago;
 
@@ -29,37 +28,15 @@ public class Loot
         var originalCanUse = item.CanUse ?? ((_ , _) => true);
         item.CanUse = (c, i) => originalCanUse(c, i) && APCanUseItem(c, i);
 
-        // Add a quick method to "activate" any runes which normally wouldnt be
-        var originalAfterModification = item.AfterModifiedWithModification;
-        item.AfterModifiedWithModification = (item, mod) => {
-            originalAfterModification?.Invoke(item, mod);
-            MakeApRunesActive(item);
-        };
+        // Add the IgnorePropertyRuneLimit trait if relevant
+        // Note: Can't use ShouldIgnorePropertyRuneLimit because the items are generated before we are in the menu
+        //   hopefully, someone with a connected archipelago wont open other campaigns or notice this property.
+        //   Player facing its slightly worse, but its less risk than two harmony patches and a rewrite of the statblock generator.
+        if (ArchipelagoClient.Instance?.ItemBonusSetting == ApItemBonusSettings.Automatic)
+            if (!item.HasTrait(Trait.IgnorePropertyRuneLimit))
+                item.Traits.Add(Trait.IgnorePropertyRuneLimit);
 
         return item;
-    }
-
-    /**
-     * After we add a runestone to an item, we need to activate it
-     */
-    public static void MakeApRunesActive(Item item)
-    {
-        // Only if we are in the campaign and the correct mode, and the item has inactive runes
-        if (ShouldIgnorePropretyRuneLimit() &&
-            item.Runes.Count != item.ActiveRunes.Count)
-        {
-            // Manually activate all "inactive" runes
-            foreach(var rune in item.Runes.Where(rune => !item.ActiveRunes.Contains(rune)))
-            {
-                rune.RuneProperties?.ApplyRuneOntoItem(rune, item);
-                item.ActiveRunes.Add(rune);
-            }
-
-            // Also fix the item's name
-            item.ProsaicName = item.ProsaicName
-                .Replace("{Gray}{strike}", "")
-                .Replace("{/strike}{/}", "");
-        }
     }
 
     /**
@@ -112,39 +89,7 @@ public class Loot
     public static bool ShouldIgnorePropretyRuneLimit()
     {
         return DawnsburyArchipelagoLoader.IsArchipelagoCampaignActive() &&
-            !ArchipelagoClient.InstancePotencyRunes;
-    }
-
-    /**
-     * Replace the item's rune stat block generator with one that will show our custom runes as active.
-     * Note: ideally, this should be handled already by adding the rune to ActiveRunes, but for some reason that doesnt work 
-     */
-    public static void ReplaceRunestoneRuleTextGenerator()
-    {
-        //ItemStatblock.ItemStatblockSectionGenerators.Add(
-        // Copy of ItemStatblock's rune block generator section, with a minor change
-        var newRuneStatblock = new ItemStatblockSectionGenerator("Runes", delegate (Item item)
-        {
-            string text = "";
-            foreach (Item rune in item.Runes.Concat(item.BakedInRunes))
-            {
-                var runeProperties = rune.RuneProperties;
-                if (runeProperties != null && (runeProperties.FundamentalLevel <= 0 || item.HasTrait(Trait.HandwrapsOfMightyBlows)))
-                {
-                    // Add an extra check to the "inactive" rune setting so that it doesnt trigger during archipelago runs
-                    if (!item.ActiveRunes.Contains(rune) && !item.BakedInRunes.Contains(rune) && !ShouldIgnorePropretyRuneLimit())
-                        text = text + "{Gray}{b}" + rune.RuneProperties!.Prefix.Capitalize() + " (inactive).{/b} " + rune.RuneProperties.RulesText + "{/}\n" ;
-                    else
-                        text = text + "{b}" + rune.RuneProperties!.Prefix.Capitalize() + ".{/b} " + rune.RuneProperties.RulesText + "\n";
-                }
-            }
-
-            return (!string.IsNullOrWhiteSpace(text)) ? new StatblockGeneratedSection("RUNES AND MATERIAL", text) : null;
-        });
-
-        // find the old rune statblock in the list and replace it
-        int index = ItemStatblock.ItemStatblockSectionGenerators.Index().First(pair => pair.Item.Name == "Runes").Index;
-        ItemStatblock.ItemStatblockSectionGenerators[index] = newRuneStatblock;
+            ArchipelagoClient.Instance?.ItemBonusSetting == ApItemBonusSettings.Automatic;
     }
 
     /**
@@ -153,45 +98,33 @@ public class Loot
     public static bool ShouldBeIncludedInArchipelagoShop(Item item, ArchipelagoClient apClient)
     {
         // Todo: should we exclude skill items? 
-        //  Currently its only a very rare bonus, so probably not. Also, because it hits everything, its far stronger.
+        //  It's a not-guaranteed bonus, so probably not. The ap bonus is much stronger anyway.
 
-        // Exclude higher-potency shiels from the shop pool if they are to be automatically upgraded
-        if (shieldsByPotency.Skip(1).Any(shield => shield.Name == item.Name) && !apClient.PotencyRunes)
-            return false;
-
-        // Determine if the item is or contains any fundamental runes
-        bool isFundmanetal = item.Traits.Contains(Trait.Fundamental) ||
-            item.Runes.Any(rune => rune.Traits.Contains(Trait.Fundamental));
-
-        // If we are in a mode where we dont use those, exclude any items which contain them. 
-        if (!apClient.PotencyRunes) return !isFundmanetal;
-
-        // In runs where we do use them, we must allow the player to purchase any qhich they have fully unlocked
-        if (isFundmanetal)
-        {
-            // Get all runes of concern on the item
-            RuneProperties[] runes = (item.RuneProperties != null)? [item.RuneProperties] :
-                [.. item.Runes.Select(i => item.RuneProperties).Where(p => p!= null).Cast<RuneProperties>()];
-            foreach (var rune in runes)
+        // If we are in manual item bonus mode, we must specifically allow unlocked fundamental runes
+        if (apClient.ItemBonusSetting == ApItemBonusSettings.Manual)
+            if (item.Traits.Contains(Trait.Fundamental) && item.RuneProperties is {} rune)
             {
-                // Local function to compare the level of the rune against the lowest hero unlock of a given type 
+                // Local function to check the lowest value of a sepcific unlock type across all heroes
                 bool CheckValue(Func<CharacterStatus, int> type) 
                     => rune.FundamentalLevel <= CharacterStatus.Heroes.Values.Min(type);
 
-                // Make sure we meet the minimum for each type
-                if (!(rune.RuneKind switch
+                // Get the correct field based on the type
+                bool fullyUnlocked = rune.RuneKind switch
                 {
                     RuneKind.WeaponPotency => CheckValue(h => h.WeaponPotency),
                     RuneKind.WeaponStriking => CheckValue(h => h.Striking),
                     RuneKind.ArmorPotency => CheckValue(h => h.ArmorPotency),
                     RuneKind.ArmorResilient => CheckValue(h => h.Resilient),
                     _ => true
-                })) return false;
+                };
+
+                // If its fully unlocked, allow it, otherwise ban it.
+                return fullyUnlocked;
             }
-        }
-        
-        // Nothing about the item flagged, so allow it.
-        return true;
+
+        // Otherwise, simply check if the item is legal
+        bool allowItemBonus = apClient.ItemBonusSetting != ApItemBonusSettings.None;
+        return IsLegalItem(item, allowItemBonus, apClient.ShouldIncludeMods);
     }
 
     /**
@@ -209,10 +142,16 @@ public class Loot
         return null;
     }
     
+    // List of items which give item bonuses that we want to block
+    public static readonly List<ItemName> ItemBonusItems = [
+        ItemName.AlchemistGoggles, ItemName.AlchemistGogglesGreater, ItemName.AlchemistGogglesMajor,
+        ItemName.GateAttenuator, ItemName.GateAttenuatorGreater, // no +3?
+        ];
+
     /**
-     * Convert a typical modification rune into an archipelago rune.
+     * Remove all instances of fundamental runes from an encounter's dropped items
      */
-    public static IEnumerable<Item> FilterLoot(IEnumerable<Item> loot)
+    public static IEnumerable<Item> RemoveFundamentalRunes(IEnumerable<Item> loot, bool allowModded)
     {
         return loot
 
@@ -220,17 +159,86 @@ public class Loot
             .SelectMany(item => item.SelfAndIncludedItems)
             .Select(item => item.DuplicateWithout(ItemModificationKind.Rune))
 
-            // Exclude magic shields and fundamental runes from the drop pile
-            .Where(item => !(item.Traits.Contains(Trait.Shield) && item.Traits.Contains(Trait.Magical)))
-            .Where(item => !item.Traits.Contains(Trait.Fundamental)); // Exclude all fundamental runes
+            // Check if the item is leagal
+            .Where(item => IsLegalItem(item, false, allowModded));
+    }
+    
+    /**
+     * Check if a given item is legal under this run's constraints
+     */
+    public static bool IsLegalItem(Item item, bool allowItemBonus, bool allowModdeditems)
+    {
+        // Check if the item is modded
+        if(!allowModdeditems && IsModdedItem(item))
+            return false;
+
+        // Check if the item is banned as something that gives an item bonus
+        if (!allowItemBonus)
+        {
+            // Exclude reinforced shields and fundamental runes
+            if (item.Traits.Contains(Trait.Fundamental) || 
+                    (item.Traits.Contains(Trait.Shield) && 
+                    shieldsByPotency.Skip(1).Any(shield => shield == item.ItemName)))
+                return false;
+
+
+            // Exclude any item which has fundamental runes or is a specific magic item with a built in bonus
+            if (item.Runes.Any(rune => rune.Traits.Contains(Trait.Fundamental)) ||
+                    item.WeaponProperties?.ItemBonus > 0 ||
+                    item.ArmorProperties?.ItemBonus > 0 ||
+                    ItemBonusItems.Contains(item.ItemName))
+                return false;
+        }
+
+        // All conditions met
+        return true;
+    }
+
+    // Cachce to save a generated list of legal items used by GetLegalItems // 
+    private static readonly Dictionary<(bool, bool), IEnumerable<Item>> _legalItems = [];
+
+    /**
+     * Get a list of every item which is legal in this run
+     */
+    public static IEnumerable<Item> GetLegalItems(bool allowItemBonus, bool allowModdeditems)
+    {
+        // Make a tuple from the two bools to use as a key
+        var key = (allowItemBonus, allowModdeditems);
+        
+        // Try to get a cached value for the given settings
+        if (_legalItems.TryGetValue(key, out var value))
+            return value;
+
+        // Otherwise, generate the cache and return it
+        else
+        {
+            _legalItems[key] = Items.ShopItems.Where(item => IsLegalItem(item, allowItemBonus, allowModdeditems));
+            return _legalItems[key];
+        }
+    }
+
+    /**
+     * Check if the item is a modded item
+     */
+    public static bool IsModdedItem(Item item) => HasModTrait(item.Traits);
+
+    /**
+     * Check if a list of traits contains a "mod" trait
+     */
+    public static bool HasModTrait(IEnumerable<Trait> traits)
+    {
+        // The humanized name of any mod's dynamic mod trait just turns into "Mod", so we look for that 
+        return traits
+            .Select(trait => trait.GetTraitProperties().HumanizedName)
+            .Any(name => name == "Mod");
     }
 
     // List of shields by potency, useful for various functions.
-    static readonly List<Item> shieldsByPotency = [
-        Items.GetItemTemplate(ItemName.SteelShield),
-        Items.GetItemTemplate(ItemName.SturdyShield8),
-        Items.GetItemTemplate(ItemName.SturdyShield10),
-        Items.GetItemTemplate(ItemName.SturdyShield13),
+    static readonly List<ItemName> shieldsByPotency = [
+        ItemName.SteelShield,
+        ItemName.SturdyShield8,
+        ItemName.SturdyShield10,
+        ItemName.SturdyShield13,
     ];
     
     /**
@@ -247,7 +255,7 @@ public class Loot
 
         // Remove all shields from the list of held items
         int itemsToReplace = creature.HeldItems.RemoveAll(
-            item => shieldsByPotency.Any(shield => shield.ItemName == item.ItemName));
+            item => shieldsByPotency.Any(shield => shield == item.ItemName));
         
         // Add in a new shield of the desired potency for every shield we removed
         while (itemsToReplace-- > 0)
@@ -255,7 +263,7 @@ public class Loot
 
         // Remove all shields from the list of carried items
         itemsToReplace = creature.CarriedItems.RemoveAll(
-            item => shieldsByPotency.Any(shield => shield.ItemName == item.ItemName));
+            item => shieldsByPotency.Any(shield => shield == item.ItemName));
         
         // Add in a new shield of the desired potency for every shield we removed
         while (itemsToReplace-- > 0)
@@ -268,7 +276,7 @@ public class Loot
     public static void DropFundamentalRunestone(int tier, bool isPotency, bool isWeapon)
     {
         // Only proceed if the run settings say we should drop the rune
-        if (ArchipelagoClient.InstancePotencyRunes)
+        if (ArchipelagoClient.Instance?.ItemBonusSetting == ApItemBonusSettings.Manual)
         {
             // Prepare a list of options sorted by type
             ItemName[] options = [
@@ -294,33 +302,167 @@ public class Loot
     /**
      * Randomize the input item within its item category
      */
-    public static Item RandomizeItem(Item original, Random rng)
+    public static Item RandomizeItemSameType(Item original, bool keepLevel, int campaignEndLevel, bool allowModded, bool allowItemBonus, Random rng)
     {
-        // Item is a spell scroll, then pick a random one at the same level
+        // Item is a spell scroll, pick a scroll within the allowed level range which is upcast by the same amount
         if (original.ScrollProperties != null)
         {
-            int scrollLevel = original.ScrollProperties.Spell.SpellLevel;
             int spellLevel = original.ScrollProperties.Spell.MinimumSpellLevel;
-            var options = AllSpells.All.Where(spell => 
-                spell.MinimumSpellLevel == spellLevel && spell.SpellLevel == scrollLevel)
+            int upcastBy = original.ScrollProperties.Spell.SpellLevel - spellLevel;
+            int minSpellLvl = keepLevel? spellLevel : 1;
+            int maxSpellLvl = keepLevel? spellLevel : Math.Max(((campaignEndLevel + 1) / 2) - upcastBy, minSpellLvl);
+            
+            // Choose a random spell that matches the criteria
+            var options = AllSpells.All
+                .Where(spell => !spell.Traits.Contains(Trait.Focus))
+                .Where(spell => allowModded || !HasModTrait(spell.Traits))
+                .Where(spell => spell.MinimumSpellLevel >= minSpellLvl)
+                .Where(spell => spell.MinimumSpellLevel <= maxSpellLvl)
                 .ToList();
 
+            if (options.Count == 0)
+                throw new ArgumentOutOfRangeException("Could not find replacement for spell scroll: " +
+                    $"{original.ScrollProperties.Spell.Name} ({spellLevel}, +{upcastBy})");
+            
             var spell = options[rng.Next(options.Count)];
-            var scroll = Items.GetItemTemplate(ItemName.SpellScroll);
-            scroll.ScrollProperties = new ScrollProperties(spell);
-            return scroll;
-        }
-        
-        // Item is a runestone, pick a random replacement
-        // TODO
-        
-        // Item is a potion, pick a random one at the same level
-        // TODO
-        
-        // Item is a weapon/armor, pick a random replacement
-        // TODO
 
-        return original;
+            // We only give a hightened level if its actually hightened, or else the scroll will break
+            int? heightenedTo = (upcastBy > 0)? spell.SpellLevel + upcastBy : null;
+            return Items.CreateSpellScroll(spell.SpellId, heightenedTo);
+        }
+
+        // Determine the replacement should be
+        int minLevel = keepLevel? original.Level : 0;
+        int maxLevel = keepLevel? original.Level : campaignEndLevel;
+
+        // Pick a random item with a matching type
+        var item = TryReplacingItemByType(original, minLevel, maxLevel, allowModded, allowItemBonus, rng);
+
+        // If we couldn't find one, try loosening the level range (for instance, weapons which are forced to lvl 0)
+        item ??= TryReplacingItemByType(original, 0, maxLevel, allowModded, allowItemBonus, rng);
+
+        // Return the chosen item if we found one, or a longsword otherwise.
+        return item ?? ItemName.Longsword;
+    }
+
+    /**
+     * Iterate over a list of traits to return an item from a replcaement pool which matches the listed traits of the original item
+     */
+    public static Item? TryReplacingItemByType(Item original, int minLevel, int maxLevel, bool allowModded, bool allowItemBonus, Random rng)
+    {
+        // Get the search pool for the input item
+        var pool = GetItemPool(original.Traits, minLevel, maxLevel, allowModded, allowItemBonus);
+
+        // If the item has runes, include them in the pool too (most "weapon" drops are just rune upgrades in disguise)
+        if (original.Runes.Count > 0)
+            pool.AddRange(GetItemPool([Trait.Runestone], minLevel, maxLevel, allowModded, allowItemBonus));
+
+        // Pick a random value from the list
+        if (pool.Count > 0)
+            return pool[rng.Next(pool.Count)];
+        
+        return null; // No matching items found
+    }
+    
+    /**
+     * Iterate over a list of traits to return an item from a replcaement pool which matches the listed traits of the original item
+     */
+    public static Item? TryReplacingItemByType(IEnumerable<Trait> traits, int minLevel, int maxLevel, bool allowModded, bool allowItemBonus, Random rng)
+    {
+        // Get the search pool
+        var pool = GetItemPool(traits, minLevel, maxLevel, allowModded, allowItemBonus);
+
+        // Pick a random value from the list
+        if (pool.Count > 0)
+            return pool[rng.Next(pool.Count)];
+        
+        return null; // No matching items
+    }
+    
+    /**
+     * Return a list of items which match the input criteria
+     */
+    public static List<Item> GetItemPool(IEnumerable<Trait> traits, int minLevel, int maxLevel, bool allowModded, bool allowItemBonus)
+    {
+        // Get a list of all legal replacements
+        var legalItems = GetLegalItems(allowItemBonus, allowModded)
+            .Where(item => item.Level >= minLevel)
+            .Where(item => item.Level <= maxLevel);
+
+        // Traits of items that represent categories of interest to check
+        // Note: Using "consumable" instead of potion because 1) more variety and 2) potions seemingly dont have that trait consistently
+        //   excluding "shield" makes them get randomized with weapons, which is probably better since the pool is so small
+        Trait[] categories = [Trait.Weapon, Trait.Armor, Trait.Runestone, Trait.Consumable, Trait.Scroll]; //Trait.Shield];
+
+        // Get a list of all items which fully match the given categories
+        return [.. 
+            legalItems.Where(item => categories.All(cat => 
+                traits.Contains(cat) == item.Traits.Contains(cat)))
+        ];
+    }
+
+    /**
+     * Turn an item into a fully random replacement
+     */
+    public static Item RandomizeItemAnyType(Item original, bool keepLevel, int campaignEndLevel, bool allowModded, bool allowItemBonus, Random rng)
+    {
+        // Get a list of all legal items
+        int minLevel = keepLevel? original.Level : 0;
+        int maxLevel = keepLevel? original.Level : campaignEndLevel;
+        var allItems = GetLegalItems(allowItemBonus, allowModded);
+
+        var pool = allItems
+            .Where(item => item.Level >= minLevel && item.Level <= maxLevel)
+            .ToList();
+
+        // Select a random item from the list
+        if (pool.Count > 0)
+            return pool[rng.Next(pool.Count)];
+
+        // If we cant find one, remove the minimum level requirement and try again
+        pool = [.. allItems.Where(item => item.Level <= maxLevel)];
+        if (pool.Count > 0)
+            return pool[rng.Next(pool.Count)];
+
+        return ItemName.Longsword; // Failsafe Longsword
+    }
+
+    /**
+     * Award a loot bag filler item to the player, returning true if successfully created
+     */
+    public static void AwardLootBag(bool allowModded, bool allowItemBonus)
+    {
+        // Create a bag of holding containing the loot (because its cool)
+        Item bag = ItemName.BagOfHolding1; // can hold 5 items
+        bag.Nickname = "Loot Bag!";
+
+        var minLevel = CharacterStatus.PartyMinLevel;
+        var maxLevel = CharacterStatus.PartyMaxLevel;
+        var rng = new Random();
+
+        // Give them some consumables, a runestone, a weapon/armor, and a misc item (none of the other categories).
+        Trait[][] itemsToAdd = [
+            [Trait.Consumable],
+            [Trait.Consumable],
+            [Trait.Runestone],
+            [(rng.Next(4) == 0)? Trait.Armor : Trait.Weapon], // 3/4 chance weapon, 1/4 armor
+            []
+        ];
+        
+        foreach (var traits in itemsToAdd)
+        {
+            // Try to find a match for our criteria, and add it to the bag
+            var item = TryReplacingItemByType(traits, minLevel, maxLevel, allowModded, allowItemBonus, rng);
+            if (item is Item realItem)
+                bag.WithModification(
+                    new ItemModification(ItemModificationKind.StoredItem) { 
+                        StoredItem = realItem 
+                });
+        }
+
+        // Try to give the player a loot bag
+        LootDropQueue.Enqueue(bag);
+        TryToAwardPendingLoot();
     }
 
     /**
@@ -336,16 +478,5 @@ public class Loot
 
             ArchipelagoClient.Instance?.SaveInventory();
         }
-    }
-
-    /**
-     * Postfix method for Weapon/ArmorProperties.ItemBonus, 
-     *  such that it always returns +3 in menus where we are faking item bonuses.
-     */
-    public static void ItemBonusPostfix(ref int __result)
-    {
-        if (DawnsburyArchipelagoLoader.InApCampaignMenu)
-            if (!ArchipelagoClient.InstancePotencyRunes)
-                __result = 3;
     }
 }

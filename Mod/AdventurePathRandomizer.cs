@@ -38,12 +38,15 @@ public class AdventurePathRandomizer(AdventurePath[] input)
     protected virtual int StartingShopLevel => startingShopLevel;
     protected virtual Illustration Icon => IllustrationName.BlueD20;
     protected virtual Func<Item, bool>? CustomShopFilter => null;
+    protected int OriginalCampaignLength = 0; // the number of encounters in the original campaign
+    protected int CampaignLength = 0; // the number of encounters in the campaign
+    protected int CampaignLengthIncludingNoncombat = 0; // the number of encounters in the campaign
 
     /// State Tracking Fields ///
     private int encounterCounter = 0;
     protected List<Item> lootPile = [];
     protected List<int> goldPile = [];
-    protected Random Rng {get; set;} = new Random();
+    protected Random ShuffleRng {get; set;} = new Random();
 
     /**
      * Create a new adventure path that shuffles the order of the input adventure path encounters. 
@@ -61,12 +64,7 @@ public class AdventurePathRandomizer(AdventurePath[] input)
      */
     public AdventurePath ShufflePath(string seed = "")
     {
-        if (seed != "")
-        {
-            // If a seed was specified, get its hash to use for the RNG
-            var hash = BitConverter.ToInt32(MD5.HashData(Encoding.UTF8.GetBytes(seed)));
-            Rng = new Random(hash);
-        }
+        ShuffleRng = MakeSeededRng(seed);
 
         // Make it into an adventure path
         var path = new AdventurePath(Id, Name, Description, StartLevel, StartingShopLevel, ShuffleCampaignStops(seed))
@@ -97,13 +95,20 @@ public class AdventurePathRandomizer(AdventurePath[] input)
 
         // Add the initial dawnsbury shop (many things break without this)
         var initalShop = AllCampaignStops[stopCount];
-        newPath.Add(CopyStop(initalShop, stopCount, currentLevel, initalShop.OpensChapter, true));
+        newPath.Add(CopyStop(initalShop, stopCount, currentLevel, initalShop.OpensChapter, seed, initialDawsnbury: true));
         stopCount++;
 
         // Get a list of campaign stops to shuffle and then shuffle them
         var remainingStops = AllCampaignStops.Skip(stopCount);
         var stopsToShuffle = GetEncountersToBeRandomized(remainingStops).ToList();
-        var shuffledStops = GetEncounterReplacementPool(remainingStops).OrderBy(_ => Rng.Next()).ToList();
+        var replacementPool = GetEncounterReplacementPool(remainingStops, seed).OrderBy(_ => ShuffleRng.Next()).ToList();
+        int remainingFillerStops = replacementPool.Count - stopsToShuffle.Count;
+        int timesAddedFiller = 0;
+
+        // Total campaign length: the number of unrandomized stops + the number of randomized stops
+        OriginalCampaignLength = AllCampaignStops.Count(IsNonCutsceneEncounter);
+        CampaignLength = remainingStops.Count(IsNonCutsceneEncounter) - stopsToShuffle.Count + replacementPool.Count;
+        CampaignLengthIncludingNoncombat = remainingStops.Count(stop => stop is EncounterCampaignStop) - stopsToShuffle.Count + replacementPool.Count;
 
         // Iterate through the filtered list of campaign stops
         foreach (var encounter in AllCampaignStops.Skip(stopCount))
@@ -112,24 +117,52 @@ public class AdventurePathRandomizer(AdventurePath[] input)
 
             // Check for shuffled encounters and get their random replacement
             if (stopsToShuffle.Contains(encounter))
-                stopToAdd = PopRandomValidStop(shuffledStops, currentLevel, Rng);
+                stopToAdd = PopRandomValidStop(replacementPool, currentLevel, ShuffleRng);
 
-            // Check if we need to apply a level up
+            // Check if we are at the end of a module, at because we reached a level up stop, or we are the last stop in the campaign
+            if (stopToAdd is LevelUpStop || stopToAdd == AllCampaignStops.Last())
+            {
+                // Before we end this module, check if we need to add any extra encounters (round up)
+                var extraAtThisLevel = Math.Ceiling((double) remainingFillerStops / (endLevel - startLevel + 1 - timesAddedFiller++));
+                remainingFillerStops -= (int) extraAtThisLevel;
+                
+                // Add extra stops for as long as we still have them
+                while (extraAtThisLevel > 0)
+                {
+                    // Add an extra long rest (Copy stop is nessecarry to setup stop metadata)
+                    var lrStop = new LongRestCampaignStop("The party rests, and gathers their strength for the challenge ahead.");
+                    newPath.Add(CopyStop(lrStop, stopCount++, currentLevel, null, seed));
+
+                    // Then add up to 3 extra stops
+                    for (int i=3; extraAtThisLevel > 0 && i > 0; i--)
+                    {
+                        var extraStop = PopRandomValidStop(replacementPool, currentLevel, ShuffleRng);
+                        NotifyBonusStop(extraStop, encounterCounter);
+                        newPath.Add(CopyStop(extraStop, stopCount++, currentLevel, null, seed));
+                        extraAtThisLevel--;
+                        
+                        // Must have a rest stops between encounters, so if this isnt the last one in the sequence, we must add one
+                        if (extraAtThisLevel > 0 && i > 1)
+                            newPath.Add(CopyStop(new MediumRestCampaignStop(null), stopCount++, currentLevel, null, seed));
+                    }
+                }
+                NotifyEndOfModule(CampaignLength, encounterCounter - 1);
+            }
+
+            // Increment the current level
             if (stopToAdd is LevelUpStop)
                 currentLevel++;
-            if (KeepCampaignStop(stopToAdd))
-                newPath.Add(CopyStop(stopToAdd, stopCount++, currentLevel, encounter.OpensChapter));
-        }
 
-        // Data Mine the loot (DEBUG)
-        //DataMineLoot(lootPile);
+            if (KeepCampaignStop(stopToAdd))
+                newPath.Add(CopyStop(stopToAdd, stopCount++, currentLevel, encounter.OpensChapter, seed));
+        }
 
         // Add custom loot to the pile
         lootPile.AddRange(MakeCustomLoot());
 
         // Randomize the loot
-        goldPile = [.. goldPile.OrderBy(_ => Rng.Next())];
-        lootPile = [.. lootPile.OrderBy(_ => Rng.Next())];
+        goldPile = [.. goldPile.OrderBy(_ => ShuffleRng.Next())];
+        lootPile = [.. lootPile.OrderBy(_ => ShuffleRng.Next())];
 
         return newPath;
     }
@@ -160,15 +193,43 @@ public class AdventurePathRandomizer(AdventurePath[] input)
      */
     protected virtual IEnumerable<EncounterCampaignStop> GetEncountersToBeRandomized(IEnumerable<CampaignStop> inputStops)
     {
-        return inputStops.Where(stop => stop is EncounterCampaignStop).Cast<EncounterCampaignStop>();
+        return inputStops.Where(IsNonCutsceneEncounter).Cast<EncounterCampaignStop>();
     }
 
     /**
      * Virutal method to return a list of campaign stops which are allowed to be randomly shuffled to replace other ones.
      */
-    protected virtual IEnumerable<EncounterCampaignStop> GetEncounterReplacementPool(IEnumerable<CampaignStop> inputStops)
+    protected virtual IEnumerable<EncounterCampaignStop> GetEncounterReplacementPool(IEnumerable<CampaignStop> inputStops, string seed)
     {
         return GetEncountersToBeRandomized(inputStops);
+    }
+
+    /**
+     * Helper method to get all the random encounters in the game.
+     */
+    public static List<RandomEncounter> GetFreeEncounterList(bool allowModded)
+    {
+        // Must init the random encounters, as this doesnt happen until the menu is opened
+        if (RandomEncounter.RandomEncounterGroups.Count == 0)
+            RandomEncounter.Init();
+
+        // A list of encounter groups which exist in the base game.
+        string[] BASE_GAME_ENCOUNTERS = ["Additional scenarios", "High-level encounters", "The Fifteen Obelisks"];
+
+        return [.. 
+            RandomEncounter.RandomEncounterGroups
+
+            // The "null" group seems to contain a duplicate of every single encounter, for some reason.
+            .Where(group => group is not null)
+
+            // If modding is not allowed, restrict to base game encounters only
+            .Where(group => allowModded || BASE_GAME_ENCOUNTERS.Contains(group))
+
+            // Remove campaign encounters (Ch1: Golden Candelabra) by searching for "Ch1: "
+            .Where(group => !((group ?? "").StartsWith("Ch") && (group ?? "").Contains(": ")))
+
+            .SelectMany(RandomEncounter.EncountersInGroup)
+        ];
     }
 
     /**
@@ -203,27 +264,81 @@ public class AdventurePathRandomizer(AdventurePath[] input)
     /**
      * Overwritable loot filtering method
      */
-    protected virtual IEnumerable<Item> FilterLoot(IEnumerable<Item> loot) => loot;
+    protected virtual IEnumerable<Item> FilterLoot(IEnumerable<Item> loot, string seed) => loot;
 
     /**
      * Overwritable method to add custom loot
      */
-    protected virtual IEnumerable<Item> MakeCustomLoot() => []; 
+    protected virtual IEnumerable<Item> MakeCustomLoot() => [];
+
+    /**
+     * Overwritable method to allow children to react to bonus stops being added to the list.
+     *  stop - the stop being added
+     *  encounterIndex - the index of the stop, relative to all encounter stops.
+     */
+    protected virtual void NotifyBonusStop(EncounterCampaignStop stop, int encounterIndex) {}
+    
+    /**
+     * Overwritable method to allow children to react to non-combat stops being added to the list.
+     *  stop - the stop being added
+     *  encounterIndex - the index of the stop, relative to all encounter stops.
+     */
+    protected virtual void NotifyConversationStop(EncounterCampaignStop stop, int encounterIndex) {}
+
+    /**
+     * Overwritable method to allow children to react to the end of a level module.
+     *  numTotalEncounters - the total number of all encounters we will include in this adventure
+     *  lastEncounterIndex - the index of the last encounter stop, relative to all encounter stops.
+     */
+    protected virtual void NotifyEndOfModule(int numTotalEncounters, int lastEncounterIndex) {}
+
+    /**
+     * Helper to check if a given campaign stop is a "real" encounter - that is, not a cutscene.
+     */
+    protected static bool IsNonCutsceneEncounter(CampaignStop stop)
+    {
+        if (stop is EncounterCampaignStop encounter)
+        {
+            var map = encounter.EncounterProvider();
+            return !map.IsConversation && !map.IsCutscene;
+        }
+        return false;
+    }
+
+    /**
+     * Helper to check if a given campaign stop is a cutscene.
+     */
+    protected static bool IsCutsceneEncounter(CampaignStop stop)
+    {
+        if (stop is EncounterCampaignStop encounter)
+        {
+            var map = encounter.EncounterProvider();
+            return map.IsConversation || map.IsCutscene;
+        }
+        return false;
+    }
 
     /**
      * Create a copy of a "CampaignStop" object, with new index and spoiler values
      */
-    protected CampaignStop CopyStop(CampaignStop input, int index, int level, string? opensChapter, bool initialDawsnbury = false)
+    protected CampaignStop CopyStop(CampaignStop input, int index, int level, string? opensChapter, string seed, bool initialDawsnbury = false)
     {
         CampaignStop newStop = input;
 
         // Have to use the correct constructor for the encounter type
         if (input is EncounterCampaignStop eStop)
         {
+            // Get the encounter built in to the stop
             var encounter = eStop.EncounterProvider();
-            lootPile.AddRange(FilterLoot(encounter.Rewards));
+            lootPile.AddRange(FilterLoot(encounter.Rewards, seed));
             goldPile.Add(encounter.RewardGold);
-            var encounterProvider = RandomEncounterProviderWrapper(encounter, level, encounterCounter++);
+
+            // If the stop is a cutscene, tell the tracker
+            if (IsCutsceneEncounter(eStop))
+                NotifyConversationStop(eStop, encounterCounter);
+
+            // Make a new encounter provider with our changes and attach it to the stop
+            var encounterProvider = RandomEncounterProviderWrapper(encounter, level, encounterCounter++, seed);
             newStop = new EncounterCampaignStop(encounterProvider);
         }
         else if (input is LevelUpStop)
@@ -252,7 +367,7 @@ public class AdventurePathRandomizer(AdventurePath[] input)
     /**
      * Wrapper for the encounter providor function to allow us to change and pre-bake loot and level values during path construction
      */
-    protected virtual Func<Encounter> RandomEncounterProviderWrapper(Encounter encounter, int level, int index)
+    protected virtual Func<Encounter> RandomEncounterProviderWrapper(Encounter encounter, int level, int index, string seed)
     {
         return () =>
         {
@@ -264,6 +379,9 @@ public class AdventurePathRandomizer(AdventurePath[] input)
             encounter.RewardGold = gold;
             encounter.Rewards.Clear();
             encounter.Rewards.AddRange(loot);
+
+            // Override the "last encounter" status
+            encounter.IsFinalCampaignEncounter = index + 1 == CampaignLengthIncludingNoncombat;
 
             return encounter;
         };
@@ -289,6 +407,20 @@ public class AdventurePathRandomizer(AdventurePath[] input)
         using var lootfile = new StreamWriter("lootdump.txt");
         foreach (var item in loot)
             lootfile.WriteLine(item.ToString());
+    }
+
+    /**
+     * Method which will create a seeded pseuedorandom number generator from the given seed 
+     */
+    public static Random MakeSeededRng(string seed)
+    {
+        if (seed != "")
+        {
+            // If a seed was specified, get its hash to use for the RNG
+            var hash = BitConverter.ToInt32(MD5.HashData(Encoding.UTF8.GetBytes(seed)));
+            return new Random(hash);
+        }
+        return new Random();
     }
 
     /**
