@@ -21,7 +21,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     // Debug Property to enable simulated effects without an archipelago connection
     public static readonly bool MockArchipelago = false;
 
-    private const int PROTOCOL_VERSION = 10400; // 1.04.00
+    private const int PROTOCOL_VERSION = 10500; // 1.05.00
 
     // Properties //
     public bool Ready { get; private set; } = false; // Is the client ready to go
@@ -39,6 +39,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     public ApLootRandomization RandomizeEncounterLoot = ApLootRandomization.None;
     public ApItemBonusSettings ItemBonusSetting = ApItemBonusSettings.Automatic;
     public ApLockedActions ShouldLockActions = ApLockedActions.None;
+    public bool RandomizeBuilds = false;
     public bool ShouldIncludeMods = false;
     private int bonusLocationStart = 0;
 
@@ -190,6 +191,9 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     */
     private void InitializeVersionedOptions(Dictionary<string, object> slotData, int serverVersion)
     {
+        if (serverVersion >= 10405)
+            RandomizeBuilds = Convert.ToBoolean(slotData["random_builds"]);
+
         if (serverVersion >= 10400)
         {
             ItemBonusSetting  = (ApItemBonusSettings) Convert.ToInt32(slotData["item_bonuses"]);

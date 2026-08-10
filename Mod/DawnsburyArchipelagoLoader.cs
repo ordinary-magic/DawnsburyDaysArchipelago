@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -8,9 +9,11 @@ using Dawnsbury.Campaign.Path;
 using Dawnsbury.Core;
 using Dawnsbury.Core.Creatures;
 using Dawnsbury.Core.Mechanics;
+using Dawnsbury.Display.Illustrations;
 using Dawnsbury.Display.Notifications;
 using Dawnsbury.Modding;
 using Dawnsbury.Phases.Menus;
+using Dawnsbury.Phases.Menus.StoryMode;
 using DawnsburyArchipelago.Data;
 using HarmonyLib;
 
@@ -49,6 +52,7 @@ public class DawnsburyArchipelagoLoader
         //ModManager.Frontend.RegisterAtEndOfDrawFrame(ApMessages.DrawToasts); // doesnt work, since we dont get frame time
         ArchipelagoSetupMenu.RegisterArchipelagoButtonInModManager();
 
+        // Finally, Setup the harmony patches
         LoadHarmony();
     }
 
@@ -71,6 +75,10 @@ public class DawnsburyArchipelagoLoader
         // Patch Toasts.Draw to make it also call our toast method.
         var dd_toasts_draw = typeof(Toasts).GetMethod(nameof(Toasts.Draw), BindingFlags.Public | BindingFlags.Static);
         harmony.Patch(dd_toasts_draw, postfix: new HarmonyMethod(ApMessages.DrawToasts));
+
+        // Temporary patch for the create new campaign state
+        var dd_campaign_state = typeof(ChooseStartPhase).GetMethod("CreateNewCampaignState", BindingFlags.NonPublic | BindingFlags.Instance);
+        harmony.Patch(dd_campaign_state, prefix: new HarmonyMethod(CustomAdventurePath.NewCampaignStatePrefix));
     }
 
     /**

@@ -11,6 +11,7 @@ using System.Text;
 using System.IO;
 using Dawnsbury.Display.Illustrations;
 using Dawnsbury.Core;
+using Dawnsbury.Core.CharacterBuilder;
 
 namespace DawnsburyArchipelago;
 
@@ -67,11 +68,12 @@ public class AdventurePathRandomizer(AdventurePath[] input)
         ShuffleRng = MakeSeededRng(seed);
 
         // Make it into an adventure path
-        var path = new AdventurePath(Id, Name, Description, StartLevel, StartingShopLevel, ShuffleCampaignStops(seed))
+        var path = new CustomAdventurePath(Id, Name, Description, StartLevel, StartingShopLevel, ShuffleCampaignStops(seed))
         {
             BackgroundMusic = input[0].BackgroundMusic,
             CreditsVictoryString = (credits ?? "") + "\nRandomization by Ordinary Magician ✨",
             Icon = Icon,
+            CustomHeroes = CustomCampaignHeroes,
         };
         return path;
     }
@@ -428,6 +430,9 @@ public class AdventurePathRandomizer(AdventurePath[] input)
      */
     protected static NarratorStop AddTextToStartOfNarrationStop(NarratorStop original, string? newName, string explainerText) =>
         new(newName ?? original.Name, explainerText + "\n\n\n\n" + original.Description, original.VoiceLine) { Index = 0 };
+
+    // Overloadable method to specify custom campaign heroes for "Quick Start" mode.
+    protected virtual List<CharacterSheet>? CustomCampaignHeroes() => null;
 
     /**
      * Get the explainer text for the initial narrator stop that describes the randomizer.

@@ -7,6 +7,10 @@ using Dawnsbury.Campaign.Encounters;
 using Dawnsbury.Core.Mechanics.Treasure;
 using Dawnsbury.Display.Illustrations;
 using DawnsburyArchipelago.Data;
+using Dawnsbury.Core.CharacterBuilder;
+using Dawnsbury.IO;
+using Dawnsbury.Core.CharacterBuilder.Library;
+using Dawnsbury.Core.StatBlocks.Monsters.L12;
 
 namespace DawnsburyArchipelago;
 
@@ -287,6 +291,31 @@ public class ArchipelagoPathRandomizer(AdventurePath[] paths, ArchipelagoClient 
         };
     }
 
+    // Override the custom campaign heros
+    protected override List<CharacterSheet>? CustomCampaignHeroes()
+    {
+        // Check if we aren't randomizing the builds
+        if (!archipelago.RandomizeBuilds)
+            return null;
+
+        // Select 4 random pregens
+        var rng = MakeSeededRng(archipelago.RngSeed); // always use the same rng for a given seed
+        var pregens = CharacterLibrary.Instance.PregenProfiles.OrderBy(_ => rng.Next()).Take(4);
+
+        // Make copies of the selected sheets (by serializing and deserializing them) so we dont affect the saved versions
+        var copies = pregens.Select(sheet =>
+            LocalDataStore.LoadText<CharacterSheet>(LocalDataStore.SerializeSystemTextJson(sheet)));
+
+        // Initialize their campaign inventory (throw on deserialization failure)
+        var chars = copies.Select(sheet => { 
+            sheet!.CampaignInventory.BecomeFrom(sheet.InventoriesByLevel[startLevel]);
+            return sheet; 
+        });
+
+        // Finally, return them
+        return [.. chars];
+    }
+
     /**
      * Get the explainer text for the initial narrator stop that describes the randomizer.
      */
@@ -295,5 +324,4 @@ public class ArchipelagoPathRandomizer(AdventurePath[] paths, ArchipelagoClient 
 In this modded adventure path, you will play through a version of this campaign with the help of your archipelago.
 Your character will unlock levels, bonuses and loot as a result of your archipelago, and every encounter you clear will send someone an item.
 Good Luck!";
-
 }

@@ -99,7 +99,8 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
             {
                 int bonus = TryGetCharacterStatus(qfSelf.Owner)?.WeaponPotency ?? 0;
                 if (bonus > 0)
-                    if (combatAction.HasTrait(Trait.Attack) && combatAction.Item != null && (combatAction.Item.HasTrait(Trait.Weapon) || combatAction.Item.HasTrait(Trait.Unarmed) || combatAction.HasTrait(Trait.Impulse)))
+                    if (combatAction.HasTrait(Trait.Attack) && combatAction.Item != null && 
+                        (combatAction.Item.HasTrait(Trait.Weapon) || combatAction.Item.HasTrait(Trait.Unarmed) || combatAction.HasTrait(Trait.Impulse)))
                     {
                         return new Bonus(bonus, BonusType.Item, "Archipelago", true);
                     }

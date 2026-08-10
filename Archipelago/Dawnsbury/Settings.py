@@ -62,6 +62,11 @@ class LootRandomizer(Choice):
     option_any_item_at_all = 4
     default = 1
 
+class RandomQuickStartBuilds(Toggle):
+    """This option will change the "Quick Start" setting to use a random build for each character.
+       This will select from your pool of installed pregen characters, without any repeats."""
+    display_name = "Random Starting Class"
+
 class IncludeModContent(Toggle):
     """If you chose options which affect items, builds, or encounters, should the randomizer include modded content?
        WARNING: If enabled, changing which mods are installed during a run can cause issues."""
@@ -125,6 +130,7 @@ class DawnsburyOptions(PerGameCommonOptions):
     extra_filler_amount: ExtraEncountersPerLevel
     loot_shuffle: LootShuffle
     loot_randomizer: LootRandomizer
+    random_builds: RandomQuickStartBuilds
     mod_content : IncludeModContent
     campaign: Campaign
     locked_actions: LockedActions
@@ -142,6 +148,7 @@ def make_option_slot_data(options: DawnsburyOptions):
         'include_extreme_encounters': options.include_extreme_encounters.value,
         'loot_shuffle': options.loot_shuffle.value,
         'loot_randomizer': options.loot_randomizer.value,
+        'random_builds': options.random_builds.value,
         'mod_content' : options.mod_content.value,
         'campaign': options.campaign.value,
         'locked_actions': options.locked_actions.value,
