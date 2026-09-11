@@ -1,6 +1,6 @@
 import random
 
-from BaseClasses import Item, ItemClassification # pyright: ignore[reportMissingImports]
+from BaseClasses import Item, ItemClassification, get_seed # pyright: ignore[reportMissingImports]
 from itertools import product, islice
 from typing import Dict, Generator, List
 
@@ -43,6 +43,19 @@ trap_items: List[str] = [
     "Doom Trap",
     "Warp Trap",
     "Flashpowder Trap",
+    "Poison Dart Trap",
+]
+
+boons: List[str] = [
+    "Boon of Health",
+    "Boon of Fast Health",
+    "Divine Blessing",
+    "Boon of Luck",
+    "Boon of Alacrity",
+    "Supernatural Battlecry",
+    "Forest's Protection",
+    "Boon of Immortality",
+    "Boon of Invulnerability",
 ]
 
 per_character_items: List[str] = [
@@ -58,12 +71,12 @@ per_character_items: List[str] = [
 ]
 
 def get_all_item_names() -> List[str]:
-    '''Get a list of every single item name that we can generatre'''
-    return expand_per_character_items() + singleton_items + trap_items
+#    '''Get a list of every single item name that we can generatre'''
+    return expand_per_character_items() + singleton_items + trap_items + boons
 
 def expand_per_character_items() -> List[str]:
    '''Create the names of all possible per-character items'''
-   return make_character_item_names(per_character_items, DEFAULT_CHARACTERS)
+   return make_character_item_names(per_character_items, ["Party"] + DEFAULT_CHARACTERS)
 
 def make_character_item_names(items: List[str], characters: List[str]) -> List[str]:
    '''Expand the input list of item names to a list of item names for each character'''
@@ -82,7 +95,10 @@ def get_cached_item_directory() -> Dict[str, int]:
     '''Caching wrapper function so we dont have to constantly regenerate this directory'''
     global _dd_item_cache
     if not _dd_item_cache:
-        _dd_item_cache = {name: (id+BASE_OFFSET) for id, name in enumerate(get_all_item_names())}
+        _dd_item_cache = {name: (id+BASE_OFFSET) for id, name in enumerate(expand_per_character_items())}
+        _dd_item_cache.update({name: (id+BASE_OFFSET) for id, name in enumerate(singleton_items, 1000)})
+        _dd_item_cache.update({name: (id+BASE_OFFSET) for id, name in enumerate(trap_items, 2000)})
+        _dd_item_cache.update({name: (id+BASE_OFFSET) for id, name in enumerate(boons, 3000)})
     return _dd_item_cache
 
 def create_item(name: str, player: int) -> DawnsburyItem:
@@ -117,6 +133,9 @@ def get_excluded_item_ids() -> List[int]:
 
 def create_items(player: int, options: DawnsburyOptions) -> List[DawnsburyItem]:
     '''Preare a list of items to include in the randomizer based on the selected customization options'''
+
+    # Iniitalize our rng seed using archipelago's seed
+    random.seed(get_seed())
     
     # Determine the campaign and make the required items
     campaign = get_chosen_campaign(options)
@@ -151,7 +170,10 @@ def make_required_items(campaign: Campaign, player:int, options: DawnsburyOption
     # Expand the type lists into the acutal items
     required_drops = [create_item(item, player) for item in single]
     for item_name in per_character:
-        required_drops += create_items_for_each_character(item_name, DEFAULT_CHARACTERS, player)
+        if options.per_character:
+            required_drops += create_items_for_each_character(item_name, DEFAULT_CHARACTERS, player)
+        else:
+            required_drops += [create_item(make_character_item_name(item_name, "Party"), player)]
 
     # Remove any excluded items
     required_drops = remove_excluded_items(required_drops)
@@ -187,7 +209,7 @@ def count_required_items(campaign: Campaign, options: DawnsburyOptions) -> int:
     single += get_settings_required_single_drops(options)
 
     # Expand the list, and remove any excluded items
-    all_drops = single + make_character_item_names(per_character, DEFAULT_CHARACTERS)
+    all_drops = single + make_character_item_names(per_character, DEFAULT_CHARACTERS if options.per_character else ["Party"])
     all_drops = remove_excluded_item_names(all_drops)
 
     # Count them
@@ -224,14 +246,15 @@ def generate_traps(player: int, max_amount: int) -> Generator[DawnsburyItem, Non
 def generate_non_campaign_filler(player: int) -> Generator[DawnsburyItem, None, None]:
     '''Generator to create filler items indefinitley'''
     while True:
-        yield create_item("Loot Bag", player)
+        # Select a random item, either a loot bag or a boon
+        yield create_item(random.choice(["Loot Bag"] + boons), player)
 
 def generate_campagin_character_filler(campaign: Campaign, options: DawnsburyOptions, player: int) -> Generator[DawnsburyItem, None, None]:
     '''Try to generate per-character filler items, in sets of 4.'''
     
-    # These are generated in sets of 4, so we must yield from the resultant array
+    # These are potentially generated in sets of 4, so we must yield from the resultant array
     for item in campaign.filler_character_drop_generator(options):
-        items = create_items_for_each_character(item, campaign.characters, player)
+        items = create_items_for_each_character(item, campaign.characters if options.per_character else ["Party"], player)
         random.shuffle(items) # Shuffle the list, in case we get cut off early
         yield from items
 
@@ -248,13 +271,12 @@ def determine_amount_of_items(campaign: Campaign, options: DawnsburyOptions) -> 
     required_items = count_required_items(campaign, options)
 
     # If we have an "Extra" encounter setting, we must include extra filler items
-    if (options.include_free_encounters == 3 or options.include_free_encounters == 4 ):    
+    if campaign.allow_bonus_encounters and (options.include_free_encounters == 3 or options.include_free_encounters == 4):
         filler = (campaign.num_levels() * options.extra_filler_amount.value)
         return max(num_encounters + filler, required_items)
     
     # Otherwise, simply return the greater of the required item and encounter counts
     return max(num_encounters, required_items)
-
 
 # Items which are 'required' to progress the game
 progression_items = [

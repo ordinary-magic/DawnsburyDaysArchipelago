@@ -1,7 +1,7 @@
 from typing import Dict, List
 from math import ceil, floor
 from BaseClasses import Location, Region # pyright: ignore[reportMissingImports]
-from .CampaignData import Campaign, All_Campaigns, get_chosen_campaign
+from .CampaignData import Campaign, get_max_encoutners_and_levels
 from .Items import BASE_OFFSET, GAME_COMPLETE, determine_amount_of_items
 from .Settings import DawnsburyOptions, MAX_BONUS_ENCOUNTERS_PER_LEVEL
 
@@ -18,11 +18,7 @@ def make_location_cache() -> Dict[str, int]:
 
     # We need a unique location for every encounter in a run.
     # Fortunatley, we only do one campaign per run so we only need enough to cover the biggest campaign
-    max_encounters = 0
-    max_levels = 0
-    for campaign in All_Campaigns:
-        max_encounters = max(campaign.num_encounters, max_encounters)
-        max_levels = max(campaign.num_levels(), max_levels)
+    max_encounters, max_levels = get_max_encoutners_and_levels()
     
     # Now make a list of Battle #3 type names for each encounter to save as the resolver cache
     result = {}

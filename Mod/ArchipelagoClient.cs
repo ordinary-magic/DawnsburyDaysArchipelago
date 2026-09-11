@@ -21,7 +21,8 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     // Debug Property to enable simulated effects without an archipelago connection
     public static readonly bool MockArchipelago = false;
 
-    private const int PROTOCOL_VERSION = 10500; // 1.05.00
+    private const int PROTOCOL_VERSION = 10600; // 1.06.00 - protocol version . feature additions . tweaks
+    private int RemoteProtocolVersion = 0;
 
     // Properties //
     public bool Ready { get; private set; } = false; // Is the client ready to go
@@ -31,16 +32,18 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     // Configuration Information //
     public string RngSeed { get; set; } = "";
     public bool UseRandomEncounterOrder { get; private set; } = false;
-    public int MaxShuffleLevelDifference = 0;
-    public ApCampaignChoice Campaign = ApCampaignChoice.DawnsburyDays;
-    public ApFreeEncounterOptions IncludeFreeEncounters = ApFreeEncounterOptions.None;
-    public bool IncludeExtremePlusFreeEncounters = false;
-    public bool ShuffleEncounterLoot = false;
-    public ApLootRandomization RandomizeEncounterLoot = ApLootRandomization.None;
-    public ApItemBonusSettings ItemBonusSetting = ApItemBonusSettings.Automatic;
-    public ApLockedActions ShouldLockActions = ApLockedActions.None;
-    public bool RandomizeBuilds = false;
-    public bool ShouldIncludeMods = false;
+    public int MaxShuffleLevelDifference { get; private set; } = 0;
+    public ApCampaignChoice Campaign { get; private set; } = ApCampaignChoice.DawnsburyDays;
+    public ApFreeEncounterOptions IncludeFreeEncounters { get; private set; } = ApFreeEncounterOptions.None;
+    public bool IncludeExtremePlusFreeEncounters { get; private set; } = false;
+    public bool ShuffleEncounterLoot { get; private set; } = false;
+    public ApLootRandomization RandomizeEncounterLoot { get; private set; } = ApLootRandomization.None;
+    public ApItemBonusSettings ItemBonusSetting { get; private set; } = ApItemBonusSettings.Automatic;
+    public ApLockedActions ShouldLockActions { get; private set; } = ApLockedActions.None;
+    public bool ApLevelUps { get; private set; } = true; // do the player's levels come from the ap instead of their game
+    public bool RandomizeBuilds { get; private set; } = false;
+    public bool ShouldIncludeMods { get; private set; } = false;
+    public bool HardcoreMode { get; private set; } = false;
     private int bonusLocationStart = 0;
 
     // State Data //
@@ -52,6 +55,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     public List<int> ExtraBonusEncounters { get; } = []; // List of encounters which should drop a "bonus" location, in addition to their normal check
     public List<int> StandaloneBonusEncoutners { get; } = []; // List of encounters which should drop a "bonus" location instead of their normal check
     public List<int> NoRewardEncounters { get; } = []; // List of encounters which do not award anything, and should be ignored by archipealgo
+    public bool DisallowRandomization => Campaign == ApCampaignChoice.Roguelike; // Do not apply randomization to the roguelike campaign 
 
     // Constant Fields //
     private readonly ArchipelagoSession apSession = ArchipelagoSessionFactory.CreateSession(connection.Server, connection.Port);
@@ -114,11 +118,11 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     private void InitializeRandomizer(Dictionary<string, object> slotData)
     {
         // Check if the version matches (handle old versions of the code)
-        int serverVersion = Convert.ToInt32(slotData.GetValueOrDefault("version") ?? 0);
-        if (serverVersion < PROTOCOL_VERSION)
-            ApMessages.LogError($"Archipelago Version Mismatch: Your Archipelago Server is out of date; some features might not work correctly.");
-        else if (serverVersion > PROTOCOL_VERSION)
-            ApMessages.LogError($"Archipelago Version Mismatch: Your Game Mod is out of date; some features might not work correctly.");
+        RemoteProtocolVersion = Convert.ToInt32(slotData.GetValueOrDefault("version") ?? 0);
+        if (RemoteProtocolVersion < PROTOCOL_VERSION)
+            ApMessages.LogError($"Archipelago Version Mismatch: Your Archipelago Server is out of date & might be missing some features.");
+        else if (RemoteProtocolVersion > PROTOCOL_VERSION)
+            ApMessages.LogError($"Archipelago Version Mismatch: Your Game Mod is out of date; please update to avoid potential issues.");
 
         // Archipelago requires unique keys across all games, so we solve this by defining a base offset for items/locations
         apBaseIDOffset = Convert.ToInt64(slotData["base_offset"]);
@@ -133,7 +137,7 @@ public class ArchipelagoClient(ApConnectionInfo connection)
 
         // Settings which weren't in the first version need default values in case of version mismatch
         Campaign = (ApCampaignChoice) Convert.ToInt32(slotData.GetValueOrDefault("campaign") ?? Campaign);
-        InitializeVersionedOptions(slotData, serverVersion);
+        InitializeVersionedOptions(slotData, RemoteProtocolVersion);
 
         // Initialize the character's status
         int start_level = Convert.ToInt32(slotData["start_level"]);
@@ -191,7 +195,13 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     */
     private void InitializeVersionedOptions(Dictionary<string, object> slotData, int serverVersion)
     {
-        if (serverVersion >= 10405)
+        if (serverVersion >= 10600)
+        {
+            HardcoreMode = Convert.ToBoolean(slotData["hardcore"]);
+            ApLevelUps = Convert.ToBoolean(slotData["level_ups"]);
+        }
+
+        if (serverVersion >= 10500)
             RandomizeBuilds = Convert.ToBoolean(slotData["random_builds"]);
 
         if (serverVersion >= 10400)
@@ -249,11 +259,12 @@ public class ArchipelagoClient(ApConnectionInfo connection)
             foreach (var id in items)
             {
                 int localId = (int) (id - apBaseIDOffset);
-                if (localId / 4 == (int) ApPerCharacterItemTypes.Interact)
-                {
-                    ApMessages.LogEvent($"Got a Starter Item - Interact!");
-                    CharacterStatus.ApplyCharacterUpgradeItem(localId, false);
-                }
+                if (localId.IsPerCharacterItem(RemoteProtocolVersion, out var type, out int slot))
+                    if(type == ApPerCharacterItemTypes.Interact)
+                    {
+                        ApMessages.LogEvent($"Got a Starter Item - Interact!");
+                        CharacterStatus.ApplyCharacterUpgradeItem(type, slot, false);
+                    }
             }
     }
 
@@ -289,34 +300,49 @@ public class ArchipelagoClient(ApConnectionInfo connection)
         bool permanant = false;
 
         // Check if it's per-character upgrade item
-        if (id < (int)ApPerCharacterItemTypes.END * 4)
+        if (id.IsPerCharacterItem(RemoteProtocolVersion, out var type, out int slot))
         {
             ApMessages.LogEvent($"Got {item.ItemName} from {item.Player.Name}!");
             permanant = await Task.Run(() =>
-                CharacterStatus.ApplyCharacterUpgradeItem(id, canIssuePermanant));
+                CharacterStatus.ApplyCharacterUpgradeItem(type, slot, canIssuePermanant));
         }
-            
-        // Check if its a loot bag
-        else if (id == (int) ApSingletonItemTypes.LootBag)
+
+        else if (id.ConvertToSingletonItem(RemoteProtocolVersion) is ApSingletonItemTypes singelton)
         {
-            // Dont drop duplicate loot bags
-            if (canIssuePermanant)
+            // Check if its a loot bag
+            if (singelton == ApSingletonItemTypes.LootBag)
             {
-                ApMessages.LogEvent($"{item.Player.Name} found some Loot!");
-                Loot.AwardLootBag(ShouldIncludeMods, ItemBonusSetting == ApItemBonusSettings.None);
+                // Dont drop duplicate loot bags
+                if (canIssuePermanant)
+                {
+                    ApMessages.LogEvent($"{item.Player.Name} found some Loot!");
+                    Loot.AwardLootBag(ShouldIncludeMods, ItemBonusSetting == ApItemBonusSettings.None);
+                }
+                permanant = true;
             }
-            permanant = true;
         }
 
         // Check if its a trap item
-        else if (id >= (int) ApSingletonItemTypes.ClumsyTrap)
+        else if (id.ConvertToTrapItem(RemoteProtocolVersion) is ApTrapItemTypes trap)
         {
             // Traps are not saved in your inventory, but they behave similarly in that
             //    we want them to only trigger once. This mostly accomplishes that.
             if (canIssuePermanant)
             {
                 ApMessages.LogEvent($"{item.Player.Name} triggerd a {item.ItemName}!");
-                CharacterStatus.PendingTraps.Enqueue((ApSingletonItemTypes) id);
+                CharacterStatus.PendingTraps.Enqueue(trap);
+            }
+            permanant = true;
+        }
+
+        // Check if its a boon item
+        else if (id.ConvertToBoonItem() is ApBoonItemTypes boon)
+        {
+            // Same as traps, we only want to give these once.
+            if (canIssuePermanant)
+            {
+                ApMessages.LogEvent($"{item.Player.Name} recieved a {item.ItemName}!");
+                CharacterStatus.PendingBoons.Enqueue(boon);
             }
             permanant = true;
         }
@@ -403,6 +429,18 @@ public class ArchipelagoClient(ApConnectionInfo connection)
     {
         EncountersCleared++;
         apSession.DataStorage[Scope.Slot, "encounters_cleared"] = EncountersCleared;
+    }
+
+    /// <summary>
+    /// Reset the run's encounter tracking progress, for instance if you reset a campaign in roguelike mode.
+    /// Note: This should not send duplicate checks, as archipelago wont issue locations more than once, even if we tell it to.
+    /// </summary>
+    public void ResetEncounterProgress()
+    {
+        EncountersCleared = 0;
+        BonusEncountersCleared = 0;
+        apSession.DataStorage[Scope.Slot, "encounters_cleared"] = 0;
+        apSession.DataStorage[Scope.Slot, "bonus_encounters_cleared"] = 0;
     }
 
     /*

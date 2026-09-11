@@ -7,8 +7,12 @@ using Dawnsbury.Audio;
 using Dawnsbury.Auxiliary;
 using Dawnsbury.Core;
 using Dawnsbury.Core.Animations;
-using Dawnsbury.Core.CharacterBuilder;
 using Dawnsbury.Core.CharacterBuilder.FeatsDb.Common;
+using Dawnsbury.Core.CharacterBuilder.FeatsDb.Kineticist.ImpulsesDb;
+using Dawnsbury.Core.CharacterBuilder.FeatsDb.Spellbook;
+using Dawnsbury.Core.CharacterBuilder.FeatsDb.TrueFeatDb;
+using Dawnsbury.Core.CharacterBuilder.FeatsDb.TrueFeatDb.Specific;
+using Dawnsbury.Core.CharacterBuilder.Spellcasting;
 using Dawnsbury.Core.CombatActions;
 using Dawnsbury.Core.Creatures;
 using Dawnsbury.Core.Creatures.Parts;
@@ -17,9 +21,11 @@ using Dawnsbury.Core.Mechanics.Core;
 using Dawnsbury.Core.Mechanics.Damage;
 using Dawnsbury.Core.Mechanics.Enumerations;
 using Dawnsbury.Core.Mechanics.Targeting;
+using Dawnsbury.Core.Mechanics.Targeting.Targets;
 using Dawnsbury.Core.Mechanics.Treasure;
 using Dawnsbury.Core.Possibilities;
 using Dawnsbury.Core.Roller;
+using Dawnsbury.Display.Controls.Portraits;
 using Dawnsbury.Display.Illustrations;
 using DawnsburyArchipelago.Data;
 
@@ -51,8 +57,9 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
     public static int PartyMaxLevel => Heroes.Max(hero => hero.Value.Level);
     public static int PartyMinLevel => Heroes.Min(hero => hero.Value.Level);
 
-    // The queue of traps to "award" to the player
-    public static readonly ConcurrentQueue<ApSingletonItemTypes> PendingTraps = [];
+    // The queue of traps and boons to "award" to the player
+    public static readonly ConcurrentQueue<ApTrapItemTypes> PendingTraps = [];
+    public static readonly ConcurrentQueue<ApBoonItemTypes> PendingBoons = [];
 
     /**
     * Progressivley improve the status of the weapon
@@ -194,45 +201,45 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
      * Apply archipelago item improvements to the characters
      *  returns true/false if the item is a permanent item drop
      */
-    public static bool ApplyCharacterUpgradeItem(int itemId, bool canIssuePermanant)
+    public static bool ApplyCharacterUpgradeItem(ApPerCharacterItemTypes type, int slot, bool canIssuePermanant)
     {
-        // Items are stored as pc1-level, pc2-level, pc3-level, pc4-level, pc1-weapon etc.
-        //  Thus, we can divide by four, and use the remainder as a pc index and the quotent as an item index. 
-        var type = (ApPerCharacterItemTypes) (itemId / 4);
-        var affectedPc = Heroes[CampaignHeroes[itemId % 4]];
-        lock (affectedPc)
-        {
-            switch (type)
+        // Slot 0 affects everyone, slot 1-4 are the pcs
+        var affectedPcs = (slot == 0)? Heroes.Values : [Heroes[CampaignHeroes[slot-1]]];
+        foreach (var affectedPc in affectedPcs)
+            
+            lock (affectedPc) // (why did I do this? idk what race condition it was avoiding)
             {
-                case ApPerCharacterItemTypes.LevelUp:
-                    affectedPc.Level++;
-                    break;
-                case ApPerCharacterItemTypes.WeaponImprovement:
-                    affectedPc.IncrementProgressiveWeaponBonuses(canIssuePermanant);
-                    break;
-                case ApPerCharacterItemTypes.ArmorImprovement:
-                    affectedPc.IncrementProgressiveArmorBonuses(canIssuePermanant);
-                    break;
-                case ApPerCharacterItemTypes.SkillImprovement:
-                    affectedPc.SkillBonus++;
-                    break;
-                case ApPerCharacterItemTypes.PerceptionImprovement:
-                    affectedPc.PerceptionBonus++;
-                    break;
-                case ApPerCharacterItemTypes.Attack:
-                    affectedPc.CanStrike = true;
-                    break;
-                case ApPerCharacterItemTypes.Cast:
-                    affectedPc.CanCastSpells = true;
-                    break;
-                case ApPerCharacterItemTypes.Move:
-                    affectedPc.CanStride = true;
-                    break;
-                case ApPerCharacterItemTypes.Interact:
-                    affectedPc.CanInteract = true;
-                    break;
+                switch (type)
+                {
+                    case ApPerCharacterItemTypes.LevelUp:
+                        affectedPc.Level++;
+                        break;
+                    case ApPerCharacterItemTypes.WeaponImprovement:
+                        affectedPc.IncrementProgressiveWeaponBonuses(canIssuePermanant);
+                        break;
+                    case ApPerCharacterItemTypes.ArmorImprovement:
+                        affectedPc.IncrementProgressiveArmorBonuses(canIssuePermanant);
+                        break;
+                    case ApPerCharacterItemTypes.SkillImprovement:
+                        affectedPc.SkillBonus++;
+                        break;
+                    case ApPerCharacterItemTypes.PerceptionImprovement:
+                        affectedPc.PerceptionBonus++;
+                        break;
+                    case ApPerCharacterItemTypes.Attack:
+                        affectedPc.CanStrike = true;
+                        break;
+                    case ApPerCharacterItemTypes.Cast:
+                        affectedPc.CanCastSpells = true;
+                        break;
+                    case ApPerCharacterItemTypes.Move:
+                        affectedPc.CanStride = true;
+                        break;
+                    case ApPerCharacterItemTypes.Interact:
+                        affectedPc.CanInteract = true;
+                        break;
+                }
             }
-        }
         return IsItemTypeSavedInInventory(type);
     }
 
@@ -293,13 +300,21 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
             {
                 // We only want to do this for pcs
                 if (CampaignHeroes.Contains(qfSelf.Owner.CreatureId))
-                {                    
-                    // Upgrade any shields the user is holding
-                    Loot.UpgradeShields(qfSelf.Owner, Heroes[qfSelf.Owner.CreatureId].ArmorPotency);
-
                     // Because this bonus func doesnt include a reference to the qeffect, we must update it here instead.
                     qfSelf.BonusToSkills = GetSkillBonus(qfSelf.Owner);
-                }
+            },
+
+            // Must check shields at start of turn because otherwise the state check timing adds
+            //   a new shield to your hand when you try to drop the one you are holding.
+            StartOfYourEveryTurn = (qfSelf, owner) =>
+            {
+                // We only want to do this for pcs
+                if (CampaignHeroes.Contains(owner.CreatureId))
+
+                    // Upgrade any shields the user is holding
+                    Loot.UpgradeShields(owner, Heroes[owner.CreatureId].ArmorPotency);
+
+                return Task.CompletedTask;
             },
 
             // Apply the ap bonuses
@@ -389,9 +404,11 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
         };
     }
     
-    /**
-    * Get the qeffect which will apply trap effects to the target at the start of their turn.
-    */
+    
+    /// <summary>
+    /// Get the QEffect which will apply trap effects to the target at the start of their turn.
+    /// </summary>
+    /// <returns>The QEffect</returns>
     public static QEffect GetTrapApplicationQEffect()
     {
         // Do not give this an image, we dont want it listed on the token.
@@ -408,13 +425,13 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
                             ApMessages.SendMessageInBattle(owner.Battle, $"{owner.Name} Triggers the {name}!");
 
                         // Special case effects
-                        if (ApSingletonItemTypes.TripTrap == trap)
+                        if (ApTrapItemTypes.TripTrap == trap)
                             return owner.FallProne();
 
-                        if (ApSingletonItemTypes.ButterfingersTrap == trap)
+                        if (ApTrapItemTypes.ButterfingersTrap == trap)
                             owner.HeldItems.ToArray().ForEach(owner.DropItem);
 
-                        if (ApSingletonItemTypes.ExplosiveTrap == trap)
+                        if (ApTrapItemTypes.ExplosiveTrap == trap)
                         {
                             // Create an explosion action to damage the caster and everyone adjancent
                             var aoe = Target.Emanation(1);
@@ -435,7 +452,7 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
                             return owner.Battle.GameLoop.FullCast(explosion, ChosenTargets.AutoconfirmEmanation(aoe));
                         }
 
-                        if(ApSingletonItemTypes.WarpTrap == trap)
+                        if(ApTrapItemTypes.WarpTrap == trap)
                         {
                             // Starting at a 10 square range and moving inward, try to find a valid tile to teleport the pc to
                             var legalTiles = Target.TileYouCanSeeAndTeleportTo(10).GetLegalTargetTiles(owner);
@@ -459,16 +476,16 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
                         // For traps which make well known QEffects, determine which to apply
                         QEffect? trapEffect = trap switch
                         {
-                            // TODO: see how these hold up
-                            ApSingletonItemTypes.ClumsyTrap => QEffect.Clumsy(2).WithExpirationAtStartOfOwnerTurn(),
-                            ApSingletonItemTypes.EnfeeblingTrap => QEffect.Enfeebled(2).WithExpirationAtStartOfOwnerTurn(),
-                            ApSingletonItemTypes.StupifyingTrap => QEffect.Stupefied(2).WithExpirationAtStartOfOwnerTurn(),
-                            ApSingletonItemTypes.FearTrap => QEffect.Frightened(2), // Automatically expires over time
-                            ApSingletonItemTypes.SickeningTrap => QEffect.Sickened(2, 15), // Must Retch
-                            ApSingletonItemTypes.SkipTurnTrap => QEffect.Stunned(3), // automatically expires after skipping your turn
-                            ApSingletonItemTypes.GlueTrap => QEffect.Immobilized().WithExpirationAtStartOfOwnerTurn(),
-                            ApSingletonItemTypes.DoomTrap => QEffect.Doomed(1), // Does not expire until end of battle
-                            ApSingletonItemTypes.FlashpowderTrap => QEffect.Blinded().WithExpirationAtStartOfOwnerTurn(),
+                            ApTrapItemTypes.ClumsyTrap => QEffect.Clumsy(2).WithExpirationAtStartOfOwnerTurn(),
+                            ApTrapItemTypes.EnfeeblingTrap => QEffect.Enfeebled(2).WithExpirationAtStartOfOwnerTurn(),
+                            ApTrapItemTypes.StupifyingTrap => QEffect.Stupefied(2).WithExpirationAtStartOfOwnerTurn(),
+                            ApTrapItemTypes.FearTrap => QEffect.Frightened(2), // Automatically expires over time
+                            ApTrapItemTypes.SickeningTrap => QEffect.Sickened(2, 15), // Must Retch
+                            ApTrapItemTypes.SkipTurnTrap => QEffect.Stunned(3), // automatically expires after skipping your turn
+                            ApTrapItemTypes.GlueTrap => QEffect.Immobilized().WithExpirationAtStartOfOwnerTurn(),
+                            ApTrapItemTypes.DoomTrap => QEffect.Doomed(1), // Does not expire until end of battle
+                            ApTrapItemTypes.FlashpowderTrap => QEffect.Blinded().WithExpirationAtStartOfOwnerTurn(),
+                            ApTrapItemTypes.PoisonDartTrap => QEffect.PersistentDamage(new SimpleDiceFormula(owner.Level, Dice.D1), DamageKind.Poison),
                             _ => null
                         };
 
@@ -481,10 +498,101 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
                 }
             };
     }
+    
+    /// <summary>
+    /// Get the QEffect which will apply boon effects to the target at the start of their turn.
+    /// </summary>
+    /// <returns>The Qeffect</returns>
+    public static QEffect GetBoonApplicationQEffect()
+    {
+        // Do not give this an image, we dont want it listed on the token.
+        return new QEffect("Archipelago - Boons", "Watch out for Boons!", ExpirationCondition.Never, null)
+            {
+                StartOfYourPrimaryTurn = (qfSelf, owner) =>
+                {                    
+                    // Try to pop a trap off of the queue
+                    if (PendingBoons.TryDequeue(out var boon))
+                    {
+                        // Get the name of the enum type, and then insert spaces. eg, Items.DoomTrap -> "Doom Trap"
+                        string name = Regex.Replace(Enum.GetName(boon) ?? "", "([A-Z])", " $1").Trim();
+                        if (name != "")
+                            ApMessages.SendMessageInBattle(owner.Battle, $"{owner.Name} Recieved the {name}!");
+
+                        // Special case effects
+                        if (ApBoonItemTypes.BoonOfHealth == boon)
+                            return owner.HealAsync(new SimpleDiceFormula(owner.Level, Dice.D6), 
+                                new CombatAction(owner, IllustrationName.Heal, "Boon of Health", [Trait.Healing], "You have been healed!", Target.Self()));
+
+                        if (ApBoonItemTypes.DivineBlessing == boon)
+                        {
+                            owner.AddQEffect(new QEffect("Divine Blessing", 
+                                "You are blessed, granting you a +1 status bonus to all your checks and DC's for the duration of this combat.", ExpirationCondition.Never, null, IllustrationName.Bless)
+                            {
+                                CountsAsBeneficialToSource = true,
+                                CountsAsABuff = true,
+                                BonusToAllChecksAndDCs = (qfSelf) => new Bonus(1, BonusType.Status, "Divine Blessing", true),
+                            });
+                            return Task.CompletedTask;
+                        }
+
+                        if (ApBoonItemTypes.BoonOfLuck == boon)
+                        {
+                            // Copied from True Strike
+                            owner.AddQEffect(new QEffect("True Strike", "The next time you make an attack roll before the end of your turn, roll the attack twice and use the better result. The attack ignores circumstance penalties to the attack roll and any flat check required due to the target being concealed or hidden.", ExpirationCondition.ExpiresAtEndOfSourcesTurn, owner, IllustrationName.TrueStrike)
+                            {
+                                CountsAsBeneficialToSource = true,
+                                CountsAsABuff = true,
+                                Id = QEffectId.TrueStrike,
+                                DoNotShowUpOverhead = true,
+                                ProvideFortuneEffectForActiveRolls = (_, action, _) => (!action.HasTrait(Trait.Attack)) ? null : "True Strike",
+                                AfterYouMakeAttackRoll = delegate (QEffect qfSelf, CheckBreakdownResult result)
+                                {
+                                    qfSelf.ExpiresAt = ExpirationCondition.Immediately;
+                                    qfSelf.Owner.RemoveAllQEffects(qff => qff == qfSelf);
+                                }
+                            });
+                            return Task.CompletedTask;
+                        }
+
+                        if (ApBoonItemTypes.SupernaturalBattelcry == boon)
+                        {
+                            // do an aoe demoralize
+                            var demoralize = CommonCombatActions.Demoralize(owner).WithActionCost(0).WithNewTarget(Target.EnemiesOnlyEmanation(6));
+                            return owner.Battle.GameLoop.FullCast(demoralize, ChosenTargets.AutoconfirmEmanation(demoralize.Target));
+                        }
+
+                        if (ApBoonItemTypes.ForestsProtection == boon)
+                        {
+                            // Make a timber sentinel at the closest free tile
+                            DifficultSpells.CreateProtectorTree(owner, owner.MaximumSpellRank, owner.Space.CenterTile, timberSentinel: true);
+                            return Task.CompletedTask;
+                        }
+
+
+                        // For traps which make well known QEffects, determine which to apply
+                        QEffect? boonEffect = boon switch
+                        {
+                            ApBoonItemTypes.BoonOfFastHealing => QEffect.FastHealing(owner.Level),
+                            ApBoonItemTypes.BoonOfAlacrity => QEffect.StatusSpeedIncrease(2),
+                            ApBoonItemTypes.BoonOfImmortality => QEffect.CannotGoBelow1HP().WithExpirationAtEndOfOwnersNextTurn(),
+                            ApBoonItemTypes.BoonOfInvulnerability => QEffect.DamageResistanceAllExcept(owner.Level, []).WithExpirationAtEndOfOwnersNextTurn(),
+                            _ => null
+                        };
+
+                        // If we have a QEffect trap, apply it to the token.
+                        if (boonEffect != null)
+                            owner.AddQEffect(boonEffect);
+                    }
+
+                    return Task.CompletedTask;
+                }
+            };
+    }
 
     /**
     * Get the current level of the campaign hero who corresponds to the provided index.
     * If archipelago is not enabled, will just return the input value instead.
+    * If archipelago.ManualLevelUps is false, will return the input value.
     * This is called by our patched version of the SpawnHero method during combat setup
     */
     public static int GetLevelForHeroIndex(int original, int index)
@@ -492,7 +600,7 @@ public class CharacterStatus(int level, int weaponPotency, int strikingRunes, in
         if (index > 3 || index < 0) // Debug (checking arguemnt order)
             throw new InvalidOperationException($"Bad Arguments to GetLevelForHeroIndex index={index} level={original}");
 
-        if (DawnsburyArchipelagoLoader.IsArchipelagoCampaignActive())
+        if (DawnsburyArchipelagoLoader.IsArchipelagoCampaignActive() && (ArchipelagoClient.Instance?.ApLevelUps ?? false))
             return Heroes[CampaignHeroes[index]].Level;
         else
             return original;

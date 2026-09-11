@@ -6,7 +6,6 @@ using Dawnsbury.Display.Illustrations;
 using Dawnsbury.Display.Text;
 using Dawnsbury.IO;
 using Dawnsbury.Modding;
-using Dawnsbury.Phases.Menus;
 using Dawnsbury.Phases.Popups;
 using DawnsburyArchipelago.Data;
 using HarmonyLib;
@@ -17,6 +16,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace DawnsburyArchipelago;
 
@@ -33,6 +33,7 @@ public class ArchipelagoSetupMenu : WindowPhase
     private static string Status => ArchipelagoClient.InstanceReady? "Connected!" : "Not Connected";
     private string error = "";
     private bool isMouseInRectangle = false;
+    private static bool TriedLoadingCache = false;
 
     public ArchipelagoSetupMenu()
         : base(new Rectangle(Root.ScreenWidth / 2 - 450, Root.ScreenHeight / 2 - 255, 900, 510))
@@ -301,6 +302,23 @@ public class ArchipelagoSetupMenu : WindowPhase
      */
     public static void DrawArchipelagoButton(Rectangle at)
     {
+        // The first time this menu loads, try to setup the archipelago connection from the cache.
+        if (!TriedLoadingCache)
+            Task.Run(() =>
+            {
+                try
+                {
+                    if (TryConnectingToArchipelagoUsingCache())
+                        DawnsburyArchipelagoLoader.SwapToArchipelagoRandomizedPath();
+                } catch (Exception e)
+                {
+                    using var logfile = new StreamWriter("errordump.txt");
+                    logfile.Write(e.Message + "\n" + e.StackTrace);
+                }
+            });
+        TriedLoadingCache = true;
+
+        // Then, draw the button as normal
         Rectangle logoRect = new(at.X + 10 + 20, at.Y + 20, at.Height - 40, at.Height - 40);
         Primitives.DrawImage(new ModdedIllustration("archipelago_logo.png"), logoRect, null, scale: true);
 

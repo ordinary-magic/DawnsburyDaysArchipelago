@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -9,11 +8,10 @@ using Dawnsbury.Campaign.Path;
 using Dawnsbury.Core;
 using Dawnsbury.Core.Creatures;
 using Dawnsbury.Core.Mechanics;
-using Dawnsbury.Display.Illustrations;
 using Dawnsbury.Display.Notifications;
 using Dawnsbury.Modding;
+using Dawnsbury.Phases.Ingame;
 using Dawnsbury.Phases.Menus;
-using Dawnsbury.Phases.Menus.StoryMode;
 using DawnsburyArchipelago.Data;
 using HarmonyLib;
 
@@ -22,8 +20,7 @@ namespace DawnsburyArchipelago;
 public class DawnsburyArchipelagoLoader
 {
     // Save the randomized paths so we can reference them later
-    public static AdventurePath? RandomDawnsburyDays { get; private set; }
-    public static AdventurePath? ArchipelagoCampaign { get; private set; }
+    public static ArchipelagoAdventurePath? ArchipelagoCampaign { get; private set; }
 
     /**
      * Main entry point into the mod.
@@ -31,19 +28,6 @@ public class DawnsburyArchipelagoLoader
     [DawnsburyDaysModMainMethod]
     public static void LoadMod()
     {
-        // Check if archipelago is available to determine if we should load the offline or online adventure path
-        if (ArchipelagoSetupMenu.TryConnectingToArchipelagoUsingCache())
-        {
-            SwapToArchipelagoRandomizedPath();
-        }
-        /*else
-        {
-            // OBSOLETED: getting unweildy to maintain, its confusing and not especially useful, except for debugging. Will remove eventually.
-            // Randomize and load the dawnsbury days adventure (in offline mode)
-            RandomDawnsburyDays = AdventurePathRandomizer.ShufflePath(DawnsburyDaysAdventurePath.DawnsburyDaysPath);
-            ModdedAdventurePaths.AllModdedPaths.Add(RandomDawnsburyDays);
-        }*/
-
         // Initialize the per-class effects required by the mod
         ModManager.RegisterActionOnEachCreature(OnCreatureLoad);
         ModManager.RegisterActionOnEachItem(Loot.AddApItemModifications);
@@ -68,17 +52,13 @@ public class DawnsburyArchipelagoLoader
         var dd_spawnhero_tosheet = FindInternalMethod(typeof(GameLoop), "SpawnInitials", "SpawnHero");
         harmony.Patch(dd_spawnhero_tosheet, transpiler: new HarmonyMethod(SpawnHeroTranspiler));
 
-        // Patch CampaignMenuPhase.CreateViews in order to track when we are in a menu
+        // Patch CampaignMenuPhase.CreateViews to do things when we enter the campaign menu
         var dd_campaign_menu_create = typeof(CampaignMenuPhase).GetMethod(nameof(CampaignMenuPhase.CreateViewsWithKeepingIndex), BindingFlags.Public | BindingFlags.Instance);
-        harmony.Patch(dd_campaign_menu_create, postfix: new HarmonyMethod(OnCampaignMenuLoad));
+        harmony.Patch(dd_campaign_menu_create, prefix: new HarmonyMethod(OnCampaignMenuLoad));
 
         // Patch Toasts.Draw to make it also call our toast method.
         var dd_toasts_draw = typeof(Toasts).GetMethod(nameof(Toasts.Draw), BindingFlags.Public | BindingFlags.Static);
         harmony.Patch(dd_toasts_draw, postfix: new HarmonyMethod(ApMessages.DrawToasts));
-
-        // Temporary patch for the create new campaign state
-        var dd_campaign_state = typeof(ChooseStartPhase).GetMethod("CreateNewCampaignState", BindingFlags.NonPublic | BindingFlags.Instance);
-        harmony.Patch(dd_campaign_state, prefix: new HarmonyMethod(CustomAdventurePath.NewCampaignStatePrefix));
     }
 
     /**
@@ -87,13 +67,8 @@ public class DawnsburyArchipelagoLoader
     public static void SwapToArchipelagoRandomizedPath()
     {
         // Make sure we are actually connected first (not convinced we shouldnt just throw an error instead)
-        if (ArchipelagoClient.Instance != null)
+        if (ArchipelagoClient.Instance is ArchipelagoClient client)
         {
-            if (RandomDawnsburyDays != null)
-            {
-                ModdedAdventurePaths.AllModdedPaths.Remove(RandomDawnsburyDays);
-                RandomDawnsburyDays = null;
-            }
             if (ArchipelagoCampaign != null)
             {
                 ModdedAdventurePaths.AllModdedPaths.Remove(ArchipelagoCampaign);
@@ -101,32 +76,37 @@ public class DawnsburyArchipelagoLoader
             }
 
             // Load the archipelago campaign, using the correct settings
-            ArchipelagoCampaign = ArchipelagoClient.Instance.Campaign switch
+            AdventurePath[] paths = ArchipelagoClient.Instance.Campaign switch
             {
-                ApCampaignChoice.DawnsburyDays =>
-                    ArchipelagoPathRandomizer.ShufflePath(DawnsburyDaysAdventurePath.DawnsburyDaysPath),
-
-                ApCampaignChoice.TheProfaneBarrier =>
-                    ArchipelagoPathRandomizer.ShufflePath(TryToLoadProfaneBarrierAdventurePath()),
-
-                ApCampaignChoice.DDandPB =>
-                    ArchipelagoPathRandomizer.ShufflePaths([
+                // Game Adventure Paths //
+                ApCampaignChoice.DawnsburyDays => [DawnsburyDaysAdventurePath.DawnsburyDaysPath],
+                ApCampaignChoice.TheProfaneBarrier => [TryToLoadProfaneBarrierAdventurePath()],
+                ApCampaignChoice.DDandPB => [
                         DawnsburyDaysAdventurePath.DawnsburyDaysPath,
                         TryToLoadProfaneBarrierAdventurePath(),
-                    ]),
-                    
-                ApCampaignChoice.GoodLittleChildren =>
-                    ArchipelagoPathRandomizer.ShufflePath(TryToLoadGoodLittleChildrenPath()),
-                    
-                ApCampaignChoice.All3 =>
-                    ArchipelagoPathRandomizer.ShufflePaths([
+                    ],
+                ApCampaignChoice.GoodLittleChildren => [TryToLoadGoodLittleChildrenPath()],
+                ApCampaignChoice.All3 => [
                         DawnsburyDaysAdventurePath.DawnsburyDaysPath,
                         TryToLoadProfaneBarrierAdventurePath(),
                         TryToLoadGoodLittleChildrenPath(),
-                    ]),
+                    ],
+
+                // Other Adventure Paths //
+                ApCampaignChoice.Roguelike => [TryToLoadRoguelikePath()],
                 
-                _ => throw new InvalidOperationException($"Unknown Campaign: {ArchipelagoClient.Instance.Campaign}. Your mod might be out of date.")
+                _ => throw new InvalidOperationException(
+                    $"Unknown Campaign: {ArchipelagoClient.Instance.Campaign}. Your mod might be out of date.")
             };
+
+            // Make the randomizer
+            ArchipelagoCampaign = new ArchipelagoAdventurePath(paths, client);
+            
+            // Setup the adventure path (roguelike processning must be deferred)
+            if (client.Campaign != ApCampaignChoice.Roguelike)
+                ArchipelagoCampaign.ProcessCampaignStops();
+
+            // Finally, register the new path with the game
             ModdedAdventurePaths.AllModdedPaths.Add(ArchipelagoCampaign);
         }
     }
@@ -140,10 +120,7 @@ public class DawnsburyArchipelagoLoader
         return path ??
             throw new InvalidOperationException("Could not load \"The Profane Barrier\" for Archipelago: DLC is not installed.");
     }
-    
-    /**
-     * Try to load the profane barrier adventure path if the dll is installed.
-     */
+
     private static AdventurePath TryToLoadGoodLittleChildrenPath()
     {
         var path = LoadDlcAdventurePath("Dawnsbury.GoodLittleChildrenNeverGrowUp", "Dawnsbury.Dlc.GoodLittleChildrenAdventurePath", "GoodLittleChildrenPath");
@@ -151,28 +128,39 @@ public class DawnsburyArchipelagoLoader
             throw new InvalidOperationException("Could not load \"Good Little Children Never Grow Up\" for Archipelago: DLC is not installed.");
     }
 
+    private static AdventurePath TryToLoadRoguelikePath()
+    {
+        return ModdedAdventurePaths.AllModdedPaths.FirstOrDefault(path => path.Id == "RoguelikeMode") ??
+            throw new InvalidOperationException("Could not load \"Roguelike Mode\" for Archipelago: Mod is not installed.");
+    }
+
+    /**
+     * Check if a user has an assembly installed, and get a type from it
+     */
+    private static Type? GetTypeByReflection(string assemblyName, string className)
+    {
+        var assembly = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == assemblyName);
+        return assembly?.GetType(className);
+    }
+
     /**
      * Check if a user has a dlc assembly installed, and extract the requested adventure path if they do
      */
     private static AdventurePath? LoadDlcAdventurePath(string dllName, string className, string propertyName)
     {
-        var dlcAssembly = AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == dllName);
-        if (dlcAssembly != null)
+        // Try to get the dlc class
+        var type = GetTypeByReflection(dllName, className);
+        if (type != null)
         {
-            var pathType = dlcAssembly.GetType(className);
-            if (pathType != null)
-            {
-                var instanceField = pathType.GetField(propertyName, BindingFlags.Public | BindingFlags.Static);
-                if (instanceField != null)
-                    return (AdventurePath?)instanceField.GetValue(null);
-                    
-                throw new InvalidOperationException($"Could not find '{propertyName}' in class '{className}'");
-            }
-            
-            // Dlc assembly exists, but the adventure path doesnt?
-            throw new InvalidOperationException($"Could not find '{className}' in dll '{dllName}'");
+            // Search for the instance in the type
+            var instanceField = type.GetField(propertyName, BindingFlags.Public | BindingFlags.Static);
+            if (instanceField != null)
+                return (AdventurePath?)instanceField.GetValue(null);
+                
+            throw new InvalidOperationException($"Could not find '{propertyName}' in class '{className}'");
         }
-        return null;
+        
+        throw new InvalidOperationException($"Could not find '{className}' in dll '{dllName}'");
     }
 
     /**
@@ -272,8 +260,9 @@ public class DawnsburyArchipelagoLoader
             // Setup the automatic tpk event
             creature.AddQEffect(GetDeatlinkCheckingQEffect());
             
-            // Create the QEffect to process trap events
+            // Create the QEffects to process trap & boon events
             creature.AddQEffect(CharacterStatus.GetTrapApplicationQEffect());
+            creature.AddQEffect(CharacterStatus.GetBoonApplicationQEffect());
         }
 
         // Do the following on every characer when we are connected, regardless of if they are a pc
@@ -329,15 +318,23 @@ public class DawnsburyArchipelagoLoader
 
                     var encounter = qfSelf.Owner.Battle.Encounter;
 
-                    // If this was the final mission, win the game
-                    if (encounter.IsFinalCampaignEncounter)
+                    // If this was the final mission and we won, win the game
+                    if (encounter.IsFinalCampaignEncounter && wasVictory)
                         result = ArchipelagoClient.Instance?.BeatGame();
 
-                    // Otehrwise, send either a location or a deathlink, depending on the battle result
+                    // Otherwise, if we won, send the next location check
                     else if (wasVictory)
                         result = ArchipelagoClient.Instance?.SendNextEncounterLocation();
+
                     else
+                        // On a loss, try to send a deathlink
                         result = ArchipelagoClient.Instance?.SendDeathlink(qfSelf.Owner.Battle.VictoryReason);
+
+                    // If the player lost the battle and we are supposed to reset, set the pending reset flag.
+                    // Note: this flag can be cleared if they "Restart Encounter" and win before returning to the menu
+                    //       but I dont have a way of stopping them from restarting it, so its better that it
+                    //       can be reset than that they can redo it and still lose later (i think)
+                    PendingHardcoreReset = !wasVictory && (ArchipelagoClient.Instance?.HardcoreMode ?? false); 
                 }
 
                 return result ?? Task.CompletedTask;
@@ -360,16 +357,88 @@ public class DawnsburyArchipelagoLoader
     // Flag to indicate if we are currently in the Ap campaign's menu
     public static bool InApCampaignMenu {get; set;} = false;
 
-    /**
-     * Method to run every time the campaign menu is loaded.
-     */
+    /// <summary>
+    /// Prefix patch for CampaignMenuPhase.CreateViewsWithKeepingIndex
+    /// </summary>
     public static void OnCampaignMenuLoad()
     {
         if (IsArchipelagoCampaignActive(false))
         {
+            // Award loot first (it might get wiped out)
+            Loot.TryToAwardPendingLoot();
+
+            // Check if we must reset progress
+            TryToDoHardcoreModeReset();
+
+            // Check for roguelike mode's post initialization stuff
+            TryToInitializeAPRoguelikeCampaign(false);
+
+            // Set our flags
             InApCampaignMenu = true;
             ApMessages.ReadyForToasts = true;
-            Loot.TryToAwardPendingLoot();
+        }
+    }
+
+    // Flag to indicate if we should reset the run when we next load the menu
+    public static bool PendingHardcoreReset {get; private set;} = false;
+
+    /// <summary>
+    /// Delete and remake the campaign, as punishment for losing in hardcore mode.
+    /// </summary>
+    public static void TryToDoHardcoreModeReset()
+    {
+        if (IsArchipelagoCampaignActive(false) && PendingHardcoreReset)
+        {
+            // Reset progress to the first campaign stop (nulls are checked by IsActive method)
+            ArchipelagoClient.Instance!.ResetEncounterProgress();
+            CampaignState.Instance!.CurrentStopIndex = 0;
+
+            // Regenerate the campaign
+            if (ArchipelagoClient.Instance?.Campaign == ApCampaignChoice.Roguelike)
+                TryToInitializeAPRoguelikeCampaign(true);
+            else
+                ArchipelagoCampaign!.ProcessCampaignStops();
+
+            // Todo: This does not reset the inventory, should I add that?
+
+            // Reset is complete.
+            PendingHardcoreReset = false;
+        }
+    }
+
+    /// <summary>
+    /// Roguelike campaign is designed to be initialized with the campaign menu load,
+    /// so we need a method to do additional setup here.
+    /// </summary>
+    /// <param name="forcedReset">Should we reset the adventure path, or should we only generate if we haven't yet done so.</param>
+    public static void TryToInitializeAPRoguelikeCampaign(bool forcedReset = false)
+    {
+        var state = CampaignState.Instance;
+        var archipelago = ArchipelagoClient.Instance;
+
+        // Check that we are beginning a roguelike ap campaign which hasnt been randomized before
+        if (ArchipelagoCampaign is not null
+            && state?.AdventurePath is AdventurePath path
+            && archipelago?.Campaign == ApCampaignChoice.Roguelike
+            && (!ArchipelagoCampaign.HasProcessedCampaignStops || forcedReset))
+        {
+            // Setup the rng seed. (Either via the run's seed, or a permutation of the last one.)
+            string seed = forcedReset? state.Tags["seed"] + "_RESET" : archipelago.RngSeed;
+            state.Tags["seed"] = ArchipelagoAdventurePath.HashSeed(seed).ToString();
+
+            // Other required metadata (not used, but are expected by generator and it will crash without them)
+            state.Tags["deaths"] = "0";
+            state.Tags["restarts"] = "0";
+
+            // Find Roguelike Mode's GenerateRun method and invoke it to build the campaign encounters
+            var harmonyPatches = GetTypeByReflection("Dawnsbury.Mods.Creatures.RoguelikeMode", "Dawnsbury.Mods.Creatures.RoguelikeMode.Patches.HarmonyPatches");
+            var rm_generate_run = (harmonyPatches?.GetMethod("GenerateRun", BindingFlags.NonPublic | BindingFlags.Static))
+                ?? throw new InvalidOperationException("Could not initialize the Roguelike Mode campaign for archipelago. Has the mod's code changed?");
+            rm_generate_run.Invoke(null, [state]);
+
+            // Now that we have the actual encounters, patch them in the randomizer for patching
+            ArchipelagoCampaign.OriginalCampaignStops = path.CampaignStops;
+            ArchipelagoCampaign.ProcessCampaignStops();
         }
     }
 }

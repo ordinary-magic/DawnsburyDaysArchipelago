@@ -74,13 +74,15 @@ class IncludeModContent(Toggle):
 
 class Campaign(Choice):
     '''Select which campaign(s) you want to play.
-       If you include DLC, you must own that dlc or the campaign will not generate.'''
+       If you include DLC, you must own that dlc or the campaign will not generate. Likewise for the roguelike campaign and the mod.
+       Note: Loot & Encounter customization aren't supported in roguelike mode (its already a roguelike).'''
     display_name = "Campaign Selection"
     option_Dawnsbury_Days = 0
     option_Profane_Barrier = 1
     option_Dawnsbury_Days_and_Profane_Barrier = 2
     option_Good_Little_Children = 3
-    option_All = 4
+    option_All_Base_Game = 4
+    option_Roguelike = 100
     default = 0
 
 class LockedActions(Choice):
@@ -105,9 +107,22 @@ class ItemBonuses(Choice):
     option_manual = 2
     default = 1
 
+class LevelUps(DefaultOnToggle):
+    """If enabled, character level ups are awarded by the archipelago, instead of at the end of chapters."""
+    display_name = "Level-Ups"
+
+class PerCharacter(DefaultOnToggle):
+    """If enabled, each unlocks/bonus drops are awarded to each PC individually (4 each). If not, upgrades affect every PC at once.
+        Note: this quarters the amount of items, so you probably want to add more traps or everything will just be loot bags."""
+    display_name = "Per-Character Drops"
+
 class DeathLink(Toggle):
     """If enabled, losing an encounter will kill all other deathlink players, and other players can cause you to wipe."""
     display_name = "Death Link"
+
+class Hardcore(Toggle):
+    """If enabled, losing an encounter will force you to restart the campaign."""
+    display_name = "Hardcore Mode"
 
 class Traps(Range):
     """For unfilled locations, we can put \"Trap\" items instead of filler loot bags or skill bonuses.
@@ -135,7 +150,10 @@ class DawnsburyOptions(PerGameCommonOptions):
     campaign: Campaign
     locked_actions: LockedActions
     item_bonuses: ItemBonuses
+    level_ups: LevelUps
+    per_character: PerCharacter
     deathlink: DeathLink
+    hardcore: Hardcore
     traps: Traps
     rng_seed: Seed # "seed" is an undocumented, already used field name in archipealgo, so we must use rng_seed instead.
 
@@ -153,6 +171,8 @@ def make_option_slot_data(options: DawnsburyOptions):
         'campaign': options.campaign.value,
         'locked_actions': options.locked_actions.value,
         'item_bonuses': options.item_bonuses.value,
+        'level_ups': options.level_ups.value,
         'deathlink': options.deathlink.value,
+        'hardcore': options.hardcore.value,
         'rng_seed': options.rng_seed.current_key,
     }

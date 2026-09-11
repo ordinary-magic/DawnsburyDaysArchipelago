@@ -23,23 +23,29 @@ def set_rules(world: MultiWorld, player: int, options: DawnsburyOptions):
         entrance = world.get_entrance(region, player)
         
         # Add the level up rule for every region exit but the first
-        if i > 1:
+        if i > 1 and options.level_ups:
             # Require one level less than the level of the incoming region
-            add_rule(entrance, get_required_level_rule(player, i - 1))
+            add_rule(entrance, get_required_level_rule(player, options, i - 1))
         
         # Add required action unlocks if that setting is enabled
-        if options.locked_actions.value > 0:
+        if options.locked_actions.value > 0 and options.per_character:
             add_rule(entrance, get_required_unlocks_rule(player, options, i))
     
     ### DEBUG ### - makes a cool uml diagram in the archipelago folder
     #from Utils import visualize_regions
     #visualize_regions(world.get_region("Menu", player), "dawnsbury.puml")
 
-def get_required_level_rule(player: int, required_level_ups: int):
+def get_required_level_rule(player: int, options: DawnsburyOptions, required_level_ups: int):
     '''Get a rule function to check if we have enough level ups to handle an encounter'''
 
     # Get a list of level up items for each character (eg. "Level Up (Tok'Dar)")
     level_up_items = list(filter(lambda s: "Level Up" in s, get_all_item_names()))
+
+    # Filter either the "Party" or PC specific level-ups
+    if options.per_character:
+        level_up_items = [item for item in level_up_items if "Party" not in item]
+    else:
+        level_up_items = [item for item in level_up_items if "Party" in item]
 
     def rule(state: CollectionState) -> bool:
         # Ensure we have the requisite number of level ups for each character

@@ -7,7 +7,8 @@ class Campaign():
     def __init__(self, name: str, encounter_count: int,
                  start_level: int, end_level: int,
                  encounters_per_level: list[int],
-                 characters: list[str] = DEFAULT_CHARACTERS):
+                 characters: list[str] = DEFAULT_CHARACTERS,
+                 allow_bonus_encounters: bool = True):
         self.name = name
         self.characters = characters # This probably cant ever not be the default bc of how items are defined, but just in case its here
         self.num_encounters = encounter_count
@@ -32,6 +33,7 @@ class Campaign():
 
         # Save the encounter list
         self.encounters_per_level = encounters_per_level
+        self.allow_bonus_encounters = allow_bonus_encounters
 
     def get_required_campaign_drops(self, settings: DawnsburyOptions) -> Tuple[List[str], List[str]]:
         '''Using the provided settings, filter and return a complete list of all required items to be dropped in the campaign.
@@ -39,7 +41,8 @@ class Campaign():
         per_character_drops = []
         
         # Add the requisite number of level ups to the list
-        per_character_drops += ["Level Up"] * (self.end_level - self.start_level)
+        if (settings.level_ups):
+            per_character_drops += ["Level Up"] * (self.end_level - self.start_level)
 
         # Check if the settings tell us to include automatic item bonuses
         if (settings.item_bonuses.value > 0):
@@ -76,8 +79,9 @@ class Campaign():
     def filler_single_item_drop_genertator(self, settings: DawnsburyOptions) -> Generator[str, None, None]:
         '''Using the provided settings, generate all one-off items that can be dropped by the campaign'''
 
-        # Nothing to do
-        yield from ()
+        # Currently none
+        yield from []
+
 
     def num_levels(self):
         return self.end_level + 1 - self.start_level
@@ -119,7 +123,10 @@ def get_perception_bonus_at_level(level: int) -> int:
 
 def get_chosen_campaign(options: DawnsburyOptions) -> Campaign:
     '''Determine what campaign(s) are selected in the options.'''
-    return All_Campaigns[options.campaign.value]
+    if options.campaign.value < 100:
+        return Game_Campaigns[options.campaign.value]
+    else:
+        return Other_Campaigns[options.campaign.value - 100]
 
 def make_campaign_metadata(options: DawnsburyOptions) -> dict[str, object]:
     '''Package the campaign metadata that the mod needs to run.'''
@@ -156,6 +163,15 @@ def merge_campaings(campaigns: list[Campaign]) -> Campaign:
     # Create and return the resultant campaign
     return Campaign(name, num_encounters, start_level, end_level, encounters_per_level, characters)
 
+def get_max_encoutners_and_levels() -> tuple[int, int]:
+    '''Get the maximum number of encounters and levels in the supported campaigns'''
+    max_encounters, max_levels = (0, 0)
+    for campaign in Game_Campaigns + Other_Campaigns:
+        max_encounters = max(campaign.num_encounters, max_encounters)
+        max_levels = max(campaign.num_levels(), max_levels)
+    return max_encounters, max_levels
+
+### Game Campaigns ###
 DawnsburyDays: Campaign = Campaign(
     "Dawnsbury Days", 21, 1, 4, [5, 6, 5, 5])
 
@@ -165,10 +181,18 @@ ProfaneBarrier: Campaign = Campaign(
 GoodLittleChildren: Campaign = Campaign(
     "Good Little Children", 5, 9, 9, [5]) # cant do much with this by iteself, but who knows
 
-All_Campaigns: List[Campaign] = [
+Game_Campaigns: List[Campaign] = [
     DawnsburyDays,
     ProfaneBarrier,
     merge_campaings([DawnsburyDays, ProfaneBarrier]),
     GoodLittleChildren,
     merge_campaings([DawnsburyDays, ProfaneBarrier, GoodLittleChildren])
+]
+
+### Other Campaigns ###
+RoguelikeMode: Campaign = Campaign(
+    "Roguelike Mode", 28, 1, 8, [4, 4, 4, 3, 4, 4, 4, 1], allow_bonus_encounters=False)
+
+Other_Campaigns: List[Campaign] = [
+    RoguelikeMode
 ]

@@ -37,6 +37,6 @@ class DawnsburyWorld(World):
         slot_data = make_option_slot_data(self.options)
         slot_data.update(make_campaign_metadata(self.options))
         slot_data['base_offset'] = BASE_OFFSET
-        slot_data['version'] = 10500 # 1.05.00
+        slot_data['version'] = 10600 # 1.06.00 - protocol version . feature additions . tweaks
         slot_data['excluded_items'] = get_excluded_item_ids()
         return slot_data
